@@ -3,7 +3,7 @@ import { ForbiddenError } from "@shared/_core/errors";
 import type { Request } from "express";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
-import { ENV } from "./env";
+import { ENV, isProtectedAdminEmail } from "./env";
 
 export type AuthenticatedUser = User;
 
@@ -18,7 +18,17 @@ class ClerkAuthService {
     if (!user) {
       user = await this.createLocalUser(auth.userId);
     } else {
-      await db.upsertUser({ openId: auth.userId, lastSignedIn: new Date() });
+      const shouldBeAdmin =
+        auth.userId === ENV.clerkAdminUserId ||
+        isProtectedAdminEmail(user.email);
+      await db.upsertUser({
+        openId: auth.userId,
+        lastSignedIn: new Date(),
+        ...(shouldBeAdmin ? { role: "admin" as const } : {}),
+      });
+      if (shouldBeAdmin && user.role !== "admin") {
+        user = { ...user, role: "admin" };
+      }
     }
 
     if (!user) throw ForbiddenError("User could not be synchronized");
@@ -40,12 +50,7 @@ class ClerkAuthService {
       "Slugly user";
 
     const shouldBeAdmin =
-      clerkUserId === ENV.clerkAdminUserId ||
-      Boolean(
-        email &&
-          ENV.bootstrapAdminEmail &&
-          email.toLowerCase() === ENV.bootstrapAdminEmail.toLowerCase()
-      );
+      clerkUserId === ENV.clerkAdminUserId || isProtectedAdminEmail(email);
 
     await db.upsertUser({
       openId: clerkUserId,

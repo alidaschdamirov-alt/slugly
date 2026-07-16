@@ -1,6 +1,7 @@
 import { SignIn, SignUp, useAuth as useClerkAuth } from "@clerk/react";
 import { useEffect } from "react";
 import { useLocation } from "wouter";
+import Sluggo from "@/components/Sluggo";
 
 export default function AuthPage() {
   const { isLoaded, isSignedIn } = useClerkAuth();
@@ -53,23 +54,21 @@ export default function AuthPage() {
           </span>
         </a>
 
-        <div className="relative z-10 max-w-[24ch]">
-          <h1
-            className="leading-[1.08] tracking-[-1.4px]"
-            style={{
-              fontFamily: "'Bricolage Grotesque'",
-              fontWeight: 800,
-              fontSize: "38px",
-            }}
-          >
-            Every campaign link, in{" "}
-            <em className="not-italic" style={{ color: "#FFD9CF" }}>
-              one live grid
-            </em>
+        <div className="relative z-10 flex flex-col items-center text-center">
+          <div className="relative grid h-[230px] w-[230px] place-items-center before:absolute before:inset-0 before:rounded-full before:bg-[radial-gradient(circle_at_50%_45%,rgba(255,255,255,.92),rgba(255,255,255,.5)_46%,rgba(255,255,255,0)_70%)]">
+            <Sluggo className="slugly-mascot-wave relative h-[190px] w-[190px]" />
+          </div>
+          <div className="relative z-10 -mt-1 max-w-[24ch] rounded-[16px_16px_16px_4px] bg-white px-4 py-2.5 text-[14.5px] font-semibold text-[#14152B] shadow-[0_14px_30px_-16px_rgba(20,20,40,.5)]">
+            {isSignUp
+              ? "Welcome! Let's build your first project."
+              : "Welcome back! Let's get you in."}
+          </div>
+          <h1 className="mt-[22px] text-3xl font-extrabold tracking-[-1px]">
+            {isSignUp ? "Your links start here" : "Your links missed you"}
           </h1>
-          <p className="opacity-90 mt-3.5 text-base leading-relaxed">
-            Group short links by project, automate UTMs, and follow campaign
-            clicks in real time.
+          <p className="mt-2 max-w-[30ch] text-[15.5px] text-white/90">
+            Group links by project, automate UTMs, and follow campaign clicks in
+            real time.
           </p>
         </div>
 

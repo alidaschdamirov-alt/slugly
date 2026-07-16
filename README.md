@@ -14,7 +14,8 @@ MySQL service, persistent file storage, and a daily maintenance job.
    - `VITE_CLERK_PUBLISHABLE_KEY` — Clerk publishable key;
    - `CLERK_PUBLISHABLE_KEY` — the same Clerk publishable key;
    - `CLERK_SECRET_KEY` — Clerk secret key;
-   - `BOOTSTRAP_ADMIN_EMAIL` — email of the first Slugly administrator.
+   - `BOOTSTRAP_ADMIN_EMAIL` — email of the protected Slugly administrator;
+     its admin role is restored automatically on sign-in.
 5. Deploy the Blueprint. Database migrations run automatically before the web
    service starts.
 6. Add the Render URL and your future custom domain to the allowed origins in
