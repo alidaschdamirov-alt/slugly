@@ -1,0 +1,1 @@
+ALTER TABLE `projects` ADD `isSystem` boolean DEFAULT false NOT NULL;

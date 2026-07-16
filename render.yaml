@@ -1,0 +1,96 @@
+services:
+  - type: pserv
+    name: slugly-mysql
+    runtime: image
+    image:
+      url: docker.io/library/mysql:8.4
+    plan: starter
+    region: frankfurt
+    envVars:
+      - key: MYSQL_DATABASE
+        value: slugly
+      - key: MYSQL_USER
+        value: slugly
+      - key: MYSQL_PASSWORD
+        generateValue: true
+      - key: MYSQL_ROOT_PASSWORD
+        generateValue: true
+      - key: PORT
+        value: 3306
+    disk:
+      name: mysql-data
+      mountPath: /var/lib/mysql
+      sizeGB: 10
+
+  - type: web
+    name: slugly
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
+    preDeployCommand: node scripts/migrate-with-retry.mjs
+    startCommand: pnpm start
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_ENV
+        value: production
+      - key: DB_HOST
+        fromService:
+          name: slugly-mysql
+          type: pserv
+          property: host
+      - key: DB_PORT
+        fromService:
+          name: slugly-mysql
+          type: pserv
+          property: port
+      - key: DB_NAME
+        value: slugly
+      - key: DB_USER
+        value: slugly
+      - key: DB_PASSWORD
+        fromService:
+          name: slugly-mysql
+          type: pserv
+          envVarKey: MYSQL_PASSWORD
+      - key: VITE_CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: STORAGE_DIR
+        value: /var/data/slugly
+      - key: STORAGE_SIGNING_SECRET
+        generateValue: true
+      - key: CRON_SECRET
+        generateValue: true
+    disk:
+      name: slugly-files
+      mountPath: /var/data
+      sizeGB: 5
+
+  - type: cron
+    name: slugly-maintenance
+    runtime: node
+    plan: starter
+    region: frankfurt
+    schedule: "15 2 * * *"
+    buildCommand: "true"
+    startCommand: node scripts/run-maintenance.mjs
+    envVars:
+      - key: APP_HOST
+        fromService:
+          name: slugly
+          type: web
+          envVarKey: RENDER_EXTERNAL_HOSTNAME
+      - key: CRON_SECRET
+        fromService:
+          name: slugly
+          type: web
+          envVarKey: CRON_SECRET

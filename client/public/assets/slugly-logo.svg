@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title">
+  <title id="title">Slugly</title>
+  <rect width="100" height="100" rx="28" fill="#5A3FF0"/>
+  <g stroke="#fff" stroke-width="11" stroke-linecap="round" fill="none">
+    <path d="M70 35C70 26 60 22 50 22 38 22 30 28 30 38c0 7 5 11 14 13"/>
+    <path d="M56 49c9 2 14 6 14 14 0 10-10 15-20 15S31 74 31 65"/>
+  </g>
+  <circle cx="44" cy="51" r="3.4" fill="#fff"/>
+  <circle cx="56" cy="49" r="3.4" fill="#fff"/>
+</svg>
