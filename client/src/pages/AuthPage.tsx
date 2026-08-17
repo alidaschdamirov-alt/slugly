@@ -1,5 +1,5 @@
 import { SignIn, SignUp, useAuth as useClerkAuth } from "@clerk/react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import Sluggo from "@/components/Sluggo";
 
@@ -8,10 +8,82 @@ export default function AuthPage() {
   const [, setLocation] = useLocation();
   const mode = new URLSearchParams(window.location.search).get("mode");
   const isSignUp = mode === "signup";
+  const [showClerkFallback, setShowClerkFallback] = useState(false);
+
+  useEffect(() => {
+    if (isLoaded) {
+      setShowClerkFallback(false);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setShowClerkFallback(true);
+    }, 6500);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isLoaded]);
 
   useEffect(() => {
     if (isLoaded && isSignedIn) setLocation("/dashboard");
   }, [isLoaded, isSignedIn, setLocation]);
+
+  if (!isLoaded && showClerkFallback) {
+    return (
+      <div
+        className="min-h-screen grid place-items-center bg-[#F4F4FB] px-6"
+        style={{ fontFamily: "'Hanken Grotesk', sans-serif" }}
+      >
+        <div className="w-full max-w-[460px] rounded-3xl border border-[#E5E5EF] bg-white p-8 text-center shadow-[0_18px_48px_-24px_rgba(40,30,120,.32)]">
+          <a href="/" className="mb-6 inline-flex items-center justify-center gap-3">
+            <img
+              src="/assets/slugly-logo.svg"
+              alt="Slugly"
+              className="h-10 w-10"
+            />
+            <span
+              className="text-2xl font-[800] tracking-[-0.5px] text-[#14152B]"
+              style={{ fontFamily: "'Bricolage Grotesque'" }}
+            >
+              Slugly
+            </span>
+          </a>
+
+          <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-[#F0EDFF] text-[#5A3FF0]">
+            <div className="h-7 w-7 rounded-full border-2 border-[#5A3FF0] border-t-transparent" />
+          </div>
+
+          <h1 className="text-[26px] font-extrabold tracking-[-0.7px] text-[#14152B]">
+            Login is being prepared
+          </h1>
+          <p className="mt-3 text-[15px] leading-6 text-[#6F6F8C]">
+            User management is temporarily in setup mode. Clerk did not finish
+            loading, so we stopped the infinite spinner and showed this fallback.
+          </p>
+
+          <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-center">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="rounded-xl bg-[#5A3FF0] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#4A2FE0]"
+            >
+              Try again
+            </button>
+            <a
+              href="/"
+              className="rounded-xl border border-[#E5E5EF] px-5 py-3 text-sm font-bold text-[#14152B] transition hover:bg-[#F4F4FB]"
+            >
+              Back to homepage
+            </a>
+          </div>
+
+          <p className="mt-5 text-xs text-[#9A9AB2]">
+            Temporary fallback until production Clerk keys and domains are
+            finalized.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!isLoaded) {
     return (
