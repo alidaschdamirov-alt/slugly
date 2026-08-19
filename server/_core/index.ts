@@ -3,6 +3,7 @@ import { initSentry } from "../sentry";
 initSentry();
 import { clerkMiddleware } from "@clerk/express";
 import express from "express";
+import type { NextFunction, Request, Response } from "express";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
@@ -13,6 +14,7 @@ import { serveStatic, setupVite } from "./vite";
 import { redirectRouter } from "../redirect";
 import { backupHandler } from "../backup";
 import { isAuthorizedCronRequest } from "./cronAuth";
+import { getDestinationUrlError, normalizeDestinationUrl } from "../../shared/validation/destination-url";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -33,6 +35,79 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
   throw new Error(`No available port found starting from ${startPort}`);
 }
 
+class DestinationUrlValidationError extends Error {}
+
+function getProcedureNames(req: Request) {
+  return req.path
+    .replace(/^\/+/, "")
+    .split(",")
+    .map(name => name.trim())
+    .filter(Boolean);
+}
+
+function normalizeUrlFields(value: unknown, keys: ReadonlySet<string>): unknown {
+  if (Array.isArray(value)) return value.map(item => normalizeUrlFields(item, keys));
+
+  if (!value || typeof value !== "object") return value;
+
+  const next: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (keys.has(key) && typeof child === "string") {
+      const error = getDestinationUrlError(child);
+      if (error) throw new DestinationUrlValidationError(error);
+      next[key] = normalizeDestinationUrl(child);
+    } else {
+      next[key] = normalizeUrlFields(child, keys);
+    }
+  }
+  return next;
+}
+
+function validateDestinationUrlsBeforeTrpc(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  const procedures = getProcedureNames(req);
+  const shouldValidateDestinationUrl = procedures.some(name =>
+    ["link.create", "link.update", "link.createBulk"].includes(name)
+  );
+  const shouldValidateAnonymousUrl = procedures.includes("link.shortenAnonymous");
+
+  if (!shouldValidateDestinationUrl && !shouldValidateAnonymousUrl) {
+    return next();
+  }
+
+  const keys = new Set<string>();
+  if (shouldValidateDestinationUrl) keys.add("destinationUrl");
+  if (shouldValidateAnonymousUrl) keys.add("url");
+
+  try {
+    if (req.body && typeof req.body === "object") {
+      req.body = normalizeUrlFields(req.body, keys);
+    }
+
+    if (typeof req.query.input === "string") {
+      const parsedInput = JSON.parse(req.query.input);
+      const normalizedInput = normalizeUrlFields(parsedInput, keys);
+      req.query.input = JSON.stringify(normalizedInput);
+    }
+  } catch (error) {
+    const message =
+      error instanceof DestinationUrlValidationError
+        ? error.message
+        : "Enter a valid URL, for example https://example.com/page";
+    return res.status(400).json({
+      error: {
+        message,
+        code: "BAD_REQUEST",
+      },
+    });
+  }
+
+  return next();
+}
+
 async function startServer() {
   const app = express();
   app.set("trust proxy", 1);
@@ -50,6 +125,7 @@ async function startServer() {
   // tRPC API
   app.use(
     "/api/trpc",
+    validateDestinationUrlsBeforeTrpc,
     createExpressMiddleware({
       router: appRouter,
       createContext,
