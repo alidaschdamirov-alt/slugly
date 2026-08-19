@@ -12,7 +12,7 @@ import { getEffectiveLinkStatus, getEffectiveStatusClass, getEffectiveStatusLabe
 import WorldMap from "@/components/WorldMap";
 import LinkPreview from "@/components/LinkPreview";
 import InlineQrCode from "@/components/InlineQrCode";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
@@ -31,6 +31,7 @@ export default function LinkAnalytics() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [uniqueClicksFromApi, setUniqueClicksFromApi] = useState<number | null>(null);
+  const requestedUniqueClicksRef = useRef<number | null>(null);
 
   const { data, isLoading } = trpc.link.analytics.useQuery(
     { id: linkId, days },
@@ -40,7 +41,10 @@ export default function LinkAnalytics() {
   const utils = trpc.useUtils();
 
   useEffect(() => {
-    if (!user || linkId <= 0) return;
+    if (!user || linkId <= 0 || requestedUniqueClicksRef.current === linkId) return;
+    requestedUniqueClicksRef.current = linkId;
+    setUniqueClicksFromApi(null);
+
     let cancelled = false;
     fetch(`/api/link/${linkId}/unique-clicks`)
       .then(response => (response.ok ? response.json() : null))
@@ -49,11 +53,13 @@ export default function LinkAnalytics() {
           setUniqueClicksFromApi(result.uniqueClicks);
         }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) requestedUniqueClicksRef.current = null;
+      });
     return () => {
       cancelled = true;
     };
-  }, [user, linkId, data?.clickCount]);
+  }, [user, linkId]);
 
   const updateLink = trpc.link.update.useMutation({
     onSuccess: () => {
