@@ -16,7 +16,7 @@ import { getEffectiveLinkStatus, getEffectiveStatusClass, getEffectiveStatusLabe
 import WorldMap from "@/components/WorldMap";
 import LinkPreview from "@/components/LinkPreview";
 import InlineQrCode from "@/components/InlineQrCode";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
@@ -43,6 +43,7 @@ export default function LinkAnalytics() {
   const [editUtmContent, setEditUtmContent] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
+  const [uniqueClicksFromApi, setUniqueClicksFromApi] = useState<number | null>(null);
 
   const { data, isLoading } = trpc.link.analytics.useQuery(
     { id: linkId, days },
@@ -50,6 +51,22 @@ export default function LinkAnalytics() {
   );
   const { data: projects } = trpc.project.list.useQuery(undefined, { enabled: !!user });
   const utils = trpc.useUtils();
+
+  useEffect(() => {
+    if (!user || linkId <= 0) return;
+    let cancelled = false;
+    fetch(`/api/link/${linkId}/unique-clicks`)
+      .then(response => (response.ok ? response.json() : null))
+      .then(result => {
+        if (!cancelled && typeof result?.uniqueClicks === "number") {
+          setUniqueClicksFromApi(result.uniqueClicks);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [user, linkId, data?.clickCount]);
 
   const updateLink = trpc.link.update.useMutation({
     onSuccess: () => {
@@ -89,7 +106,7 @@ export default function LinkAnalytics() {
       : `${window.location.origin}/r/${data.link.shortCode}`
     : "";
   const effectiveStatus = data?.link ? getEffectiveLinkStatus(data.link) : "active";
-  const uniqueClicks = (data as any)?.uniqueClicks ?? (data as any)?.uniqueClickCount;
+  const uniqueClicks = uniqueClicksFromApi ?? (data as any)?.uniqueClicks ?? (data as any)?.uniqueClickCount;
 
   const copyLink = () => {
     if (shortUrl) {
