@@ -16,6 +16,51 @@ import { toast } from "sonner";
 import TagInput from "@/components/TagInput";
 import { UpsellDialog, parseLimitError } from "@/components/UpsellDialog";
 
+const CUSTOM_CODE_RE = /^[a-zA-Z0-9_-]+$/;
+
+function normalizeDestinationUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const withProtocol = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+
+  try {
+    const parsed = new URL(withProtocol);
+    if (!parsed.hostname || !["http:", "https:"].includes(parsed.protocol)) {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function getFriendlyError(message: string) {
+  try {
+    const parsed = JSON.parse(message);
+    if (Array.isArray(parsed)) {
+      const customCodeIssue = parsed.find((issue: any) => issue?.path?.includes("customCode"));
+      if (customCodeIssue) {
+        return "Custom short code can contain only Latin letters, numbers, hyphens, and underscores.";
+      }
+      const urlIssue = parsed.find((issue: any) => issue?.path?.includes("destinationUrl"));
+      if (urlIssue) {
+        return "Enter a valid destination URL.";
+      }
+    }
+  } catch {
+    // Not a JSON/Zod error.
+  }
+
+  if (message.includes("Invalid string") && message.includes("customCode")) {
+    return "Custom short code can contain only Latin letters, numbers, hyphens, and underscores.";
+  }
+
+  return message || "Something went wrong. Please try again.";
+}
+
 export default function CreateLink() {
   const { user, loading: authLoading } = useAuth();
   const [, setLocation] = useLocation();
@@ -24,8 +69,10 @@ export default function CreateLink() {
   const preselectedProject = params.get("project");
 
   const [url, setUrl] = useState("");
+  const [urlError, setUrlError] = useState("");
   const [title, setTitle] = useState("");
   const [customCode, setCustomCode] = useState("");
+  const [customCodeError, setCustomCodeError] = useState("");
   const [projectId, setProjectId] = useState(preselectedProject || "");
   const [showUtm, setShowUtm] = useState(false);
   const [utmSource, setUtmSource] = useState("");
@@ -36,6 +83,7 @@ export default function CreateLink() {
   const [tags, setTags] = useState<string[]>([]);
   const [activeFrom, setActiveFrom] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
+  const [scheduleError, setScheduleError] = useState("");
   const [showScheduling, setShowScheduling] = useState(false);
   const [createdCode, setCreatedCode] = useState<string | null>(null);
   const [createdLinkId, setCreatedLinkId] = useState<number | null>(null);
@@ -61,7 +109,7 @@ export default function CreateLink() {
         setUpsellError(limitErr);
         setUpsellOpen(true);
       } else {
-        toast.error(err.message);
+        toast.error(getFriendlyError(err.message));
       }
     },
   });
@@ -73,25 +121,67 @@ export default function CreateLink() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setUrlError("");
+    setCustomCodeError("");
+    setScheduleError("");
+
+    const normalizedUrl = normalizeDestinationUrl(url);
+    if (!normalizedUrl) {
+      setUrlError("Enter a valid URL, for example https://example.com.");
+      return;
+    }
+
+    const cleanedCustomCode = customCode.trim();
+    if (cleanedCustomCode && !CUSTOM_CODE_RE.test(cleanedCustomCode)) {
+      setCustomCodeError("Only Latin letters, numbers, hyphens, and underscores are allowed.");
+      return;
+    }
+
+    const activeFromTs = activeFrom ? new Date(activeFrom).getTime() : undefined;
+    const expiresAtTs = expiresAt ? new Date(expiresAt).getTime() : undefined;
+    const now = Date.now();
+
+    if (expiresAtTs && expiresAtTs <= now) {
+      setScheduleError("Expiry date must be in the future.");
+      return;
+    }
+
+    if (activeFromTs && expiresAtTs && activeFromTs >= expiresAtTs) {
+      setScheduleError("Active-from date must be before expiry date.");
+      return;
+    }
+
+    if (normalizedUrl !== url) {
+      setUrl(normalizedUrl);
+    }
+
+    trackEvent("link_create_clicked", {
+      has_custom_code: !!cleanedCustomCode,
+      has_project: !!projectId,
+      has_utm: !!(utmSource || utmMedium || utmCampaign || utmTerm || utmContent),
+      has_schedule: !!(activeFrom || expiresAt),
+    });
+
     createLink.mutate({
-      destinationUrl: url,
+      destinationUrl: normalizedUrl,
       title: title || undefined,
       projectId: projectId ? parseInt(projectId) : undefined,
-      customCode: customCode || undefined,
+      customCode: cleanedCustomCode || undefined,
       tags: tags.length > 0 ? tags : undefined,
       utmSource: utmSource || undefined,
       utmMedium: utmMedium || undefined,
       utmCampaign: utmCampaign || undefined,
       utmTerm: utmTerm || undefined,
       utmContent: utmContent || undefined,
-      activeFrom: activeFrom ? new Date(activeFrom).getTime() : undefined,
-      expiresAt: expiresAt ? new Date(expiresAt).getTime() : undefined,
+      activeFrom: activeFromTs,
+      expiresAt: expiresAtTs,
     });
   };
 
   const copyCreatedLink = () => {
     if (createdCode) {
       navigator.clipboard.writeText(`${window.location.origin}/r/${createdCode}`);
+      trackEvent("link_copy_clicked", { source: "create_success", shortCode: createdCode });
       setCopied(true);
       toast.success("Copied!");
       setTimeout(() => setCopied(false), 2000);
@@ -100,11 +190,14 @@ export default function CreateLink() {
 
   const resetForm = () => {
     setUrl("");
+    setUrlError("");
     setTitle("");
     setCustomCode("");
+    setCustomCodeError("");
     setTags([]);
     setActiveFrom("");
     setExpiresAt("");
+    setScheduleError("");
     setShowScheduling(false);
     setUtmSource("");
     setUtmMedium("");
@@ -181,16 +274,24 @@ export default function CreateLink() {
           </Card>
         ) : (
           <Card className="p-6">
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form onSubmit={handleSubmit} className="space-y-5" noValidate>
               <div className="space-y-2">
                 <Label>Destination URL *</Label>
                 <Input
                   value={url}
-                  onChange={e => setUrl(e.target.value)}
+                  onChange={e => {
+                    setUrl(e.target.value);
+                    setUrlError("");
+                  }}
+                  onBlur={() => {
+                    const normalized = normalizeDestinationUrl(url);
+                    if (normalized) setUrl(normalized);
+                  }}
                   placeholder="https://example.com/landing-page"
-                  type="url"
+                  aria-invalid={!!urlError}
                   required
                 />
+                {urlError && <p className="text-xs text-destructive">{urlError}</p>}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -224,11 +325,19 @@ export default function CreateLink() {
                   <span className="text-sm text-muted-foreground whitespace-nowrap">{window.location.host}/r/</span>
                   <Input
                     value={customCode}
-                    onChange={e => setCustomCode(e.target.value)}
+                    onChange={e => {
+                      setCustomCode(e.target.value);
+                      setCustomCodeError("");
+                    }}
                     placeholder="my-link"
-                    pattern="[a-zA-Z0-9_-]+"
+                    aria-invalid={!!customCodeError}
                   />
                 </div>
+                {customCodeError ? (
+                  <p className="text-xs text-destructive">{customCodeError}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Use Latin letters, numbers, hyphens, or underscores.</p>
+                )}
               </div>
 
               <Separator />
@@ -251,7 +360,10 @@ export default function CreateLink() {
                         <Input
                           type="datetime-local"
                           value={activeFrom}
-                          onChange={e => setActiveFrom(e.target.value)}
+                          onChange={e => {
+                            setActiveFrom(e.target.value);
+                            setScheduleError("");
+                          }}
                           className="h-9 text-sm"
                         />
                         <p className="text-xs text-muted-foreground">Link won't redirect until this date</p>
@@ -261,12 +373,16 @@ export default function CreateLink() {
                         <Input
                           type="datetime-local"
                           value={expiresAt}
-                          onChange={e => setExpiresAt(e.target.value)}
+                          onChange={e => {
+                            setExpiresAt(e.target.value);
+                            setScheduleError("");
+                          }}
                           className="h-9 text-sm"
                         />
                         <p className="text-xs text-muted-foreground">Link stops redirecting after this date</p>
                       </div>
                     </div>
+                    {scheduleError && <p className="text-xs text-destructive">{scheduleError}</p>}
                   </div>
                 )}
               </div>
@@ -311,7 +427,7 @@ export default function CreateLink() {
                 )}
               </div>
 
-              <Button type="submit" className="w-full" disabled={createLink.isPending || !url}>
+              <Button type="submit" className="w-full" disabled={createLink.isPending || !url.trim()}>
                 {createLink.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Link2 className="h-4 w-4 mr-2" />}
                 Create Short Link
               </Button>
