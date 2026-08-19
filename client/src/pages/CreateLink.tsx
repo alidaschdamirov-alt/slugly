@@ -9,12 +9,13 @@ import { Separator } from "@/components/ui/separator";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
 import { trackEvent } from "@/lib/analytics";
-import { ArrowLeft, Link2, Loader2, ChevronDown, ChevronUp, Copy, Check, Calendar, BarChart3 } from "lucide-react";
+import { ArrowLeft, Link2, Loader2, ChevronDown, ChevronUp, Copy, Check, Calendar, BarChart3, AlertTriangle, ArrowUpCircle } from "lucide-react";
 import { useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { toast } from "sonner";
 import TagInput from "@/components/TagInput";
 import { UpsellDialog, parseLimitError } from "@/components/UpsellDialog";
+import { getNextPlan } from "../../../shared/plans";
 
 const CUSTOM_CODE_RE = /^[a-zA-Z0-9_-]+$/;
 
@@ -28,9 +29,7 @@ function normalizeDestinationUrl(value: string): string | null {
 
   try {
     const parsed = new URL(withProtocol);
-    if (!parsed.hostname || !["http:", "https:"].includes(parsed.protocol)) {
-      return null;
-    }
+    if (!parsed.hostname || !["http:", "https:"].includes(parsed.protocol)) return null;
     return parsed.toString();
   } catch {
     return null;
@@ -42,13 +41,9 @@ function getFriendlyError(message: string) {
     const parsed = JSON.parse(message);
     if (Array.isArray(parsed)) {
       const customCodeIssue = parsed.find((issue: any) => issue?.path?.includes("customCode"));
-      if (customCodeIssue) {
-        return "Custom short code can contain only Latin letters, numbers, hyphens, and underscores.";
-      }
+      if (customCodeIssue) return "Custom short code can contain only Latin letters, numbers, hyphens, and underscores.";
       const urlIssue = parsed.find((issue: any) => issue?.path?.includes("destinationUrl"));
-      if (urlIssue) {
-        return "Enter a valid destination URL.";
-      }
+      if (urlIssue) return "Enter a valid destination URL.";
     }
   } catch {
     // Not a JSON/Zod error.
@@ -92,13 +87,23 @@ export default function CreateLink() {
   const [upsellOpen, setUpsellOpen] = useState(false);
 
   const { data: projects } = trpc.project.list.useQuery(undefined, { enabled: !!user });
+  const { data: workspaceState, isLoading: workspaceLoading } = trpc.workspace.current.useQuery(undefined, { enabled: !!user });
   const utils = trpc.useUtils();
+
+  const plan = workspaceState?.workspace?.plan || "free";
+  const linkLimit = workspaceState?.planConfig?.limits?.links ?? -1;
+  const linkUsage = workspaceState?.usage?.links ?? 0;
+  const linkLimitReached = linkLimit !== -1 && linkUsage >= linkLimit;
+  const linksRemaining = linkLimit === -1 ? null : Math.max(linkLimit - linkUsage, 0);
+  const nearLinkLimit = linkLimit !== -1 && !linkLimitReached && linksRemaining !== null && linksRemaining <= 1;
+
   const createLink = trpc.link.create.useMutation({
     onSuccess: (data) => {
       setCreatedCode(data.shortCode);
       setCreatedLinkId(data.id);
       utils.link.list.invalidate();
       utils.tag.list.invalidate();
+      utils.workspace.current.invalidate();
       utils.billing.status.invalidate();
       toast.success("Link created!");
       trackEvent("link_created", { shortCode: data.shortCode });
@@ -119,11 +124,28 @@ export default function CreateLink() {
   }
   if (!user) { window.location.href = getLoginUrl(); return null; }
 
+  const openLinkLimitUpsell = () => {
+    setUpsellError({
+      type: "LIMIT_REACHED",
+      resource: "links",
+      limit: linkLimit,
+      current: linkUsage,
+      currentPlan: plan,
+      nextPlan: getNextPlan(plan as any),
+    });
+    setUpsellOpen(true);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setUrlError("");
     setCustomCodeError("");
     setScheduleError("");
+
+    if (linkLimitReached) {
+      openLinkLimitUpsell();
+      return;
+    }
 
     const normalizedUrl = normalizeDestinationUrl(url);
     if (!normalizedUrl) {
@@ -151,9 +173,7 @@ export default function CreateLink() {
       return;
     }
 
-    if (normalizedUrl !== url) {
-      setUrl(normalizedUrl);
-    }
+    if (normalizedUrl !== url) setUrl(normalizedUrl);
 
     trackEvent("link_create_clicked", {
       has_custom_code: !!cleanedCustomCode,
@@ -205,6 +225,7 @@ export default function CreateLink() {
     setUtmTerm("");
     setUtmContent("");
     setCreatedCode(null);
+    setCreatedLinkId(null);
   };
 
   return (
@@ -231,35 +252,23 @@ export default function CreateLink() {
               <h2 className="text-lg font-semibold mb-2">Link Created!</h2>
               <p className="text-sm text-muted-foreground mb-4">Your short link is ready to share</p>
               <div className="flex items-center justify-center gap-2 mb-6">
-                <code className="text-sm bg-muted px-3 py-1.5 rounded-md font-mono">
-                  {window.location.origin}/r/{createdCode}
-                </code>
+                <code className="text-sm bg-muted px-3 py-1.5 rounded-md font-mono">{window.location.origin}/r/{createdCode}</code>
                 <button onClick={copyCreatedLink} className="p-2 hover:bg-muted rounded-md transition-colors">
                   {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
                 </button>
               </div>
             </div>
 
-            {/* Next steps guidance */}
             <div className="border rounded-lg p-4 bg-muted/30 mb-6">
               <h3 className="text-sm font-medium mb-3">What's next?</h3>
               <div className="space-y-2.5">
-                <div className="flex items-start gap-3 text-sm">
-                  <span className="flex items-center justify-center h-5 w-5 rounded-full bg-primary/10 text-primary text-xs font-bold shrink-0 mt-0.5">1</span>
-                  <span className="text-muted-foreground"><strong className="text-foreground">Share your link</strong> — paste it in social media, emails, or anywhere you want to track clicks</span>
-                </div>
-                <div className="flex items-start gap-3 text-sm">
-                  <span className="flex items-center justify-center h-5 w-5 rounded-full bg-primary/10 text-primary text-xs font-bold shrink-0 mt-0.5">2</span>
-                  <span className="text-muted-foreground"><strong className="text-foreground">Watch clicks roll in</strong> — see real-time analytics: countries, devices, referrers</span>
-                </div>
-                <div className="flex items-start gap-3 text-sm">
-                  <span className="flex items-center justify-center h-5 w-5 rounded-full bg-primary/10 text-primary text-xs font-bold shrink-0 mt-0.5">3</span>
-                  <span className="text-muted-foreground"><strong className="text-foreground">Optimize</strong> — use UTM tags and A/B test destinations</span>
-                </div>
+                <Step number="1" title="Share your link" text="paste it in social media, emails, or anywhere you want to track clicks" />
+                <Step number="2" title="Watch clicks roll in" text="see real-time analytics: countries, devices, referrers" />
+                <Step number="3" title="Optimize" text="use UTM tags and A/B test destinations" />
               </div>
             </div>
 
-            <div className="flex gap-3 justify-center">
+            <div className="flex gap-3 justify-center flex-wrap">
               <Button variant="outline" onClick={resetForm}>Create Another</Button>
               {createdLinkId && (
                 <Button variant="outline" onClick={() => setLocation(`/link/${createdLinkId}/analytics`)}>
@@ -267,28 +276,31 @@ export default function CreateLink() {
                   View Analytics
                 </Button>
               )}
-              <Button onClick={() => setLocation(projectId ? `/project/${projectId}` : "/dashboard")}>
-                View Links
-              </Button>
+              <Button onClick={() => setLocation(projectId ? `/project/${projectId}` : "/dashboard")}>View Links</Button>
             </div>
           </Card>
         ) : (
           <Card className="p-6">
+            <LimitNotice
+              loading={workspaceLoading}
+              limit={linkLimit}
+              usage={linkUsage}
+              remaining={linksRemaining}
+              reached={linkLimitReached}
+              near={nearLinkLimit}
+              onUpgrade={openLinkLimitUpsell}
+            />
+
             <form onSubmit={handleSubmit} className="space-y-5" noValidate>
               <div className="space-y-2">
                 <Label>Destination URL *</Label>
                 <Input
                   value={url}
-                  onChange={e => {
-                    setUrl(e.target.value);
-                    setUrlError("");
-                  }}
-                  onBlur={() => {
-                    const normalized = normalizeDestinationUrl(url);
-                    if (normalized) setUrl(normalized);
-                  }}
+                  onChange={e => { setUrl(e.target.value); setUrlError(""); }}
+                  onBlur={() => { const normalized = normalizeDestinationUrl(url); if (normalized) setUrl(normalized); }}
                   placeholder="https://example.com/landing-page"
                   aria-invalid={!!urlError}
+                  disabled={linkLimitReached}
                   required
                 />
                 {urlError && <p className="text-xs text-destructive">{urlError}</p>}
@@ -297,18 +309,14 @@ export default function CreateLink() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Title (optional)</Label>
-                  <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Black Friday Landing" />
+                  <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Black Friday Landing" disabled={linkLimitReached} />
                 </div>
                 <div className="space-y-2">
                   <Label>Project</Label>
-                  <Select value={projectId} onValueChange={setProjectId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select project" />
-                    </SelectTrigger>
+                  <Select value={projectId} onValueChange={setProjectId} disabled={linkLimitReached}>
+                    <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
                     <SelectContent>
-                      {projects?.map(p => (
-                        <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>
-                      ))}
+                      {projects?.map(p => <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -325,30 +333,19 @@ export default function CreateLink() {
                   <span className="text-sm text-muted-foreground whitespace-nowrap">{window.location.host}/r/</span>
                   <Input
                     value={customCode}
-                    onChange={e => {
-                      setCustomCode(e.target.value);
-                      setCustomCodeError("");
-                    }}
+                    onChange={e => { setCustomCode(e.target.value); setCustomCodeError(""); }}
                     placeholder="my-link"
                     aria-invalid={!!customCodeError}
+                    disabled={linkLimitReached}
                   />
                 </div>
-                {customCodeError ? (
-                  <p className="text-xs text-destructive">{customCodeError}</p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">Use Latin letters, numbers, hyphens, or underscores.</p>
-                )}
+                {customCodeError ? <p className="text-xs text-destructive">{customCodeError}</p> : <p className="text-xs text-muted-foreground">Use Latin letters, numbers, hyphens, or underscores.</p>}
               </div>
 
               <Separator />
 
-              {/* Scheduling */}
               <div>
-                <button
-                  type="button"
-                  onClick={() => setShowScheduling(!showScheduling)}
-                  className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-                >
+                <button type="button" onClick={() => setShowScheduling(!showScheduling)} className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors" disabled={linkLimitReached}>
                   {showScheduling ? <ChevronUp className="h-4 w-4" /> : <Calendar className="h-4 w-4" />}
                   Schedule & Expiry
                 </button>
@@ -357,28 +354,12 @@ export default function CreateLink() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div className="space-y-1.5">
                         <Label className="text-xs">Active From (optional)</Label>
-                        <Input
-                          type="datetime-local"
-                          value={activeFrom}
-                          onChange={e => {
-                            setActiveFrom(e.target.value);
-                            setScheduleError("");
-                          }}
-                          className="h-9 text-sm"
-                        />
+                        <Input type="datetime-local" value={activeFrom} onChange={e => { setActiveFrom(e.target.value); setScheduleError(""); }} className="h-9 text-sm" disabled={linkLimitReached} />
                         <p className="text-xs text-muted-foreground">Link won't redirect until this date</p>
                       </div>
                       <div className="space-y-1.5">
                         <Label className="text-xs">Expires At (optional)</Label>
-                        <Input
-                          type="datetime-local"
-                          value={expiresAt}
-                          onChange={e => {
-                            setExpiresAt(e.target.value);
-                            setScheduleError("");
-                          }}
-                          className="h-9 text-sm"
-                        />
+                        <Input type="datetime-local" value={expiresAt} onChange={e => { setExpiresAt(e.target.value); setScheduleError(""); }} className="h-9 text-sm" disabled={linkLimitReached} />
                         <p className="text-xs text-muted-foreground">Link stops redirecting after this date</p>
                       </div>
                     </div>
@@ -389,47 +370,30 @@ export default function CreateLink() {
 
               <Separator />
 
-              {/* UTM Builder */}
               <div>
-                <button
-                  type="button"
-                  onClick={() => setShowUtm(!showUtm)}
-                  className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-                >
+                <button type="button" onClick={() => setShowUtm(!showUtm)} className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors" disabled={linkLimitReached}>
                   {showUtm ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                   UTM Parameters
                 </button>
                 {showUtm && (
                   <div className="mt-4 space-y-3 pl-2 border-l-2 border-primary/20">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">Source</Label>
-                        <Input value={utmSource} onChange={e => setUtmSource(e.target.value)} placeholder="facebook, google, newsletter" className="h-9 text-sm" />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">Medium</Label>
-                        <Input value={utmMedium} onChange={e => setUtmMedium(e.target.value)} placeholder="cpc, email, social" className="h-9 text-sm" />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">Campaign</Label>
-                        <Input value={utmCampaign} onChange={e => setUtmCampaign(e.target.value)} placeholder="black_friday_2024" className="h-9 text-sm" />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">Term</Label>
-                        <Input value={utmTerm} onChange={e => setUtmTerm(e.target.value)} placeholder="running+shoes" className="h-9 text-sm" />
-                      </div>
+                      <TextField label="Source" value={utmSource} onChange={setUtmSource} placeholder="facebook, google, newsletter" disabled={linkLimitReached} />
+                      <TextField label="Medium" value={utmMedium} onChange={setUtmMedium} placeholder="cpc, email, social" disabled={linkLimitReached} />
+                      <TextField label="Campaign" value={utmCampaign} onChange={setUtmCampaign} placeholder="black_friday_2024" disabled={linkLimitReached} />
+                      <TextField label="Term" value={utmTerm} onChange={setUtmTerm} placeholder="running+shoes" disabled={linkLimitReached} />
                       <div className="space-y-1.5 md:col-span-2">
                         <Label className="text-xs">Content</Label>
-                        <Input value={utmContent} onChange={e => setUtmContent(e.target.value)} placeholder="banner_top, cta_button" className="h-9 text-sm" />
+                        <Input value={utmContent} onChange={e => setUtmContent(e.target.value)} placeholder="banner_top, cta_button" className="h-9 text-sm" disabled={linkLimitReached} />
                       </div>
                     </div>
                   </div>
                 )}
               </div>
 
-              <Button type="submit" className="w-full" disabled={createLink.isPending || !url.trim()}>
-                {createLink.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Link2 className="h-4 w-4 mr-2" />}
-                Create Short Link
+              <Button type="submit" className="w-full" disabled={createLink.isPending || workspaceLoading || !url.trim() || linkLimitReached}>
+                {createLink.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : linkLimitReached ? <ArrowUpCircle className="h-4 w-4 mr-2" /> : <Link2 className="h-4 w-4 mr-2" />}
+                {linkLimitReached ? "Upgrade to Create More Links" : "Create Short Link"}
               </Button>
             </form>
           </Card>
@@ -437,5 +401,53 @@ export default function CreateLink() {
       </div>
       <UpsellDialog error={upsellError} open={upsellOpen} onOpenChange={setUpsellOpen} />
     </AppShell>
+  );
+}
+
+function LimitNotice({ loading, limit, usage, remaining, reached, near, onUpgrade }: { loading: boolean; limit: number; usage: number; remaining: number | null; reached: boolean; near: boolean; onUpgrade: () => void }) {
+  if (loading) {
+    return <div className="mb-5 h-14 rounded-lg bg-muted/60 animate-pulse" />;
+  }
+  if (limit === -1) {
+    return <div className="mb-5 rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">Links usage: <strong className="text-foreground">{usage.toLocaleString()}</strong> / unlimited</div>;
+  }
+  if (reached) {
+    return (
+      <div className="mb-5 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-destructive">Link limit reached</p>
+            <p className="text-xs text-muted-foreground mt-0.5">You are using {usage}/{limit} links. Upgrade your plan before creating another short link.</p>
+          </div>
+          <Button type="button" size="sm" onClick={onUpgrade}>Upgrade</Button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className={`mb-5 rounded-lg border px-4 py-3 text-sm ${near ? "border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/20 dark:text-amber-200" : "bg-muted/30 text-muted-foreground"}`}>
+      Links usage: <strong className={near ? "text-amber-900 dark:text-amber-100" : "text-foreground"}>{usage}/{limit}</strong>
+      {remaining !== null && <span className="ml-1">— {remaining} remaining.</span>}
+      {near && <span className="ml-1 font-medium">You are close to your plan limit.</span>}
+    </div>
+  );
+}
+
+function Step({ number, title, text }: { number: string; title: string; text: string }) {
+  return (
+    <div className="flex items-start gap-3 text-sm">
+      <span className="flex items-center justify-center h-5 w-5 rounded-full bg-primary/10 text-primary text-xs font-bold shrink-0 mt-0.5">{number}</span>
+      <span className="text-muted-foreground"><strong className="text-foreground">{title}</strong> — {text}</span>
+    </div>
+  );
+}
+
+function TextField({ label, value, onChange, placeholder, disabled }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; disabled?: boolean }) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">{label}</Label>
+      <Input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} className="h-9 text-sm" disabled={disabled} />
+    </div>
   );
 }
