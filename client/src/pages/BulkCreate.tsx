@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
 import FeatureGateCard from "@/components/FeatureGateCard";
+import { FeatureAccessSkeleton } from "@/components/PageSkeleton";
 import { ArrowLeft, Loader2, Zap, Copy, Check } from "lucide-react";
 import { useState } from "react";
 import { useLocation } from "wouter";
@@ -113,10 +114,7 @@ export default function BulkCreate() {
         <h1 className="text-2xl font-semibold tracking-tight mb-6">Bulk Create Links</h1>
 
         {billingLoading ? (
-          <Card className="p-8 flex items-center justify-center gap-2 text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            Checking plan access...
-          </Card>
+          <FeatureAccessSkeleton />
         ) : !canUseBulkCreate ? (
           <FeatureGateCard
             title="Bulk create requires Pro"
