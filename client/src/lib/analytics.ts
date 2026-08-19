@@ -19,11 +19,13 @@ import * as amplitude from "@amplitude/analytics-browser";
 const AMPLITUDE_KEY = import.meta.env.VITE_AMPLITUDE_API_KEY || "";
 const GA_ID = import.meta.env.VITE_GA_ID || "";
 const CONSENT_KEY = "slugly_analytics_consent";
+const MIN_ANALYTICS_ID_LENGTH = 5;
 
 let initialized = false;
 let consentGranted = false;
 let lastTrackedPage = "";
 let clickTrackingInstalled = false;
+let warnedInvalidAnalyticsId = false;
 
 /**
  * Check if user has previously granted analytics consent.
@@ -139,6 +141,35 @@ function getPagePath(path?: string) {
   return `${window.location.pathname}${window.location.search}`;
 }
 
+function warnInvalidAnalyticsId(value: unknown) {
+  if (warnedInvalidAnalyticsId) return;
+  warnedInvalidAnalyticsId = true;
+  console.warn("[Analytics] Skipping identity with invalid id length", value);
+}
+
+function normalizeAnalyticsId(prefix: "user" | "ws", value: unknown) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const normalized = raw.startsWith(`${prefix}_`) ? raw : `${prefix}_${raw}`;
+  if (normalized.length < MIN_ANALYTICS_ID_LENGTH) {
+    warnInvalidAnalyticsId(raw);
+    return null;
+  }
+  return normalized;
+}
+
+function normalizeAnalyticsTraits(traits?: Record<string, any>) {
+  if (!traits) return undefined;
+  return Object.fromEntries(
+    Object.entries(traits).map(([key, value]) => {
+      if ((key === "workspaceId" || key === "workspace_id") && value != null) {
+        return [key, normalizeAnalyticsId("ws", value) ?? undefined];
+      }
+      return [key, value];
+    }).filter(([, value]) => value !== undefined)
+  );
+}
+
 /**
  * Track a page view explicitly for GA4 and Amplitude.
  * This is required for SPA navigation where the browser does not reload.
@@ -208,19 +239,24 @@ export function trackEvent(name: string, properties?: Record<string, any>) {
 export function identifyUser(userId: string, traits?: Record<string, any>) {
   if (!consentGranted) return;
 
+  const analyticsUserId = normalizeAnalyticsId("user", userId);
+  if (!analyticsUserId) return;
+
   initTrackers();
 
+  const normalizedTraits = normalizeAnalyticsTraits(traits);
+
   if (AMPLITUDE_KEY && initialized) {
-    amplitude.setUserId(userId);
-    if (traits) {
+    amplitude.setUserId(analyticsUserId);
+    if (normalizedTraits) {
       const identify = new amplitude.Identify();
-      Object.entries(traits).forEach(([k, v]) => identify.set(k, v));
+      Object.entries(normalizedTraits).forEach(([k, v]) => identify.set(k, v));
       amplitude.identify(identify);
     }
   }
 
   if (GA_ID && typeof window.gtag === "function") {
-    window.gtag("set", { user_id: userId });
+    window.gtag("set", { user_id: analyticsUserId });
   }
 }
 
