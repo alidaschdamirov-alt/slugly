@@ -6,6 +6,7 @@ import {
   Pencil,
   Trash2,
   QrCode,
+  AlertTriangle,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -15,6 +16,7 @@ import {
   getEffectiveStatusClass,
   getEffectiveStatusLabel,
 } from "@/lib/linkStatus";
+import { normalizeDestinationUrl } from "../../../shared/validation/destination-url";
 
 interface LinkGridCardProps {
   link: {
@@ -95,6 +97,7 @@ export default function LinkGridCard({
   const [copied, setCopied] = useState(false);
   const baseUrl = window.location.origin;
   const effectiveStatus = getEffectiveLinkStatus(link);
+  const destinationInvalid = normalizeDestinationUrl(link.destinationUrl) === null;
 
   const copyLink = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -135,7 +138,7 @@ export default function LinkGridCard({
   return (
     <div
       onClick={onClick}
-      className="group cursor-pointer rounded-[15px] border bg-card p-[15px_16px_13px] transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_18px_40px_-26px_rgba(58,43,176,.5)]"
+      className={`group cursor-pointer rounded-[15px] border bg-card p-[15px_16px_13px] transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_18px_40px_-26px_rgba(58,43,176,.5)] ${destinationInvalid ? "border-destructive/40" : ""}`}
     >
       {/* Short link + actions */}
       <div className="flex items-center justify-between mb-2">
@@ -188,10 +191,15 @@ export default function LinkGridCard({
       {link.title && (
         <p className="text-sm font-medium truncate mb-0.5">{link.title}</p>
       )}
-      <p className="text-xs text-muted-foreground truncate mb-2 flex items-center gap-1">
-        <ExternalLink className="h-3 w-3 shrink-0" />
+      <p className={`text-xs truncate mb-2 flex items-center gap-1 ${destinationInvalid ? "text-destructive" : "text-muted-foreground"}`}>
+        {destinationInvalid ? <AlertTriangle className="h-3 w-3 shrink-0" /> : <ExternalLink className="h-3 w-3 shrink-0" />}
         {truncateUrl(link.destinationUrl)}
       </p>
+      {destinationInvalid && (
+        <Badge variant="secondary" className="mb-2 border-destructive/30 bg-destructive/10 text-[10px] text-destructive">
+          Broken destination
+        </Badge>
+      )}
 
       {/* Tags */}
       {link.tags && link.tags.length > 0 && (
