@@ -3,6 +3,10 @@ import { useMemo, useState } from "react";
 
 const GEO_URL = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 const DEFAULT_CENTER: [number, number] = [10, 25];
+const MAP_NO_DATA_FILL = "#EEF0F4";
+const MAP_NO_DATA_HOVER_FILL = "#E2E8F0";
+const MAP_NO_DATA_STROKE = "#CBD5E1";
+const MAP_ACTIVE_STROKE = "#5A3FF0";
 
 type CountryRow = { value: string | null; count: number };
 type CountryMeta = {
@@ -205,30 +209,25 @@ export default function WorldMap({ countries }: WorldMapProps) {
 
   const getColor = (geoId: string | number | undefined) => {
     const count = stats.countById.get(normalizeNumericId(geoId));
-    if (!count) return "hsl(var(--muted))";
-    const intensity = Math.max(0.22, count / stats.maxCount);
-    return `oklch(0.56 ${0.14 + 0.08 * intensity} 270 / ${0.38 + intensity * 0.56})`;
+    if (count == null) return MAP_NO_DATA_FILL;
+    const intensity = Math.max(0.18, count / stats.maxCount);
+    const lightness = 0.88 - 0.28 * intensity;
+    const chroma = 0.05 + 0.17 * intensity;
+    return `oklch(${lightness} ${chroma} 270)`;
   };
 
-  if (countries.length === 0 || stats.displayRows.length === 0) {
-    return (
-      <div className="flex h-40 items-center justify-center rounded-xl border border-dashed text-sm text-muted-foreground">
-        No geographic data available
-      </div>
-    );
-  }
-
+  const hasRows = countries.length > 0 && stats.displayRows.length > 0;
   const focusedLabels = stats.displayRows.slice(0, 3).map(row => row.label).join(", ");
 
   return (
     <div className="space-y-4">
-      <div className="relative h-[220px] w-full overflow-hidden rounded-xl border bg-muted/20 sm:h-[250px]">
+      <div className="relative h-[220px] w-full overflow-hidden rounded-xl border sm:h-[250px]" style={{ backgroundColor: "#F8FAFC" }}>
         <ComposableMap
           projection="geoMercator"
           projectionConfig={{ scale: 115, center: DEFAULT_CENTER }}
           className="h-full w-full"
         >
-          <ZoomableGroup zoom={stats.zoom} center={stats.center}>
+          <ZoomableGroup zoom={hasRows ? stats.zoom : 1} center={hasRows ? stats.center : DEFAULT_CENTER}>
             <Geographies geography={GEO_URL}>
               {({ geographies }) =>
                 geographies.map((geo) => {
@@ -239,13 +238,13 @@ export default function WorldMap({ countries }: WorldMapProps) {
                       key={geo.rsmKey}
                       geography={geo}
                       fill={getColor(geo.id)}
-                      stroke={count ? "oklch(0.56 0.2 270)" : "hsl(var(--border))"}
-                      strokeWidth={count ? 0.9 : 0.4}
+                      stroke={count ? MAP_ACTIVE_STROKE : MAP_NO_DATA_STROKE}
+                      strokeWidth={count ? 0.9 : 0.45}
                       style={{
                         default: { outline: "none" },
                         hover: {
                           outline: "none",
-                          fill: count ? "oklch(0.56 0.22 270)" : "hsl(var(--accent))",
+                          fill: count ? MAP_ACTIVE_STROKE : MAP_NO_DATA_HOVER_FILL,
                         },
                         pressed: { outline: "none" },
                       }}
@@ -262,9 +261,15 @@ export default function WorldMap({ countries }: WorldMapProps) {
           </ZoomableGroup>
         </ComposableMap>
 
-        <div className="absolute bottom-3 left-3 rounded-md border bg-popover/90 px-2.5 py-1.5 text-xs text-popover-foreground shadow-sm backdrop-blur">
-          Focus: {focusedLabels}
-        </div>
+        {hasRows ? (
+          <div className="absolute bottom-3 left-3 rounded-md border bg-popover/90 px-2.5 py-1.5 text-xs text-popover-foreground shadow-sm backdrop-blur">
+            Focus: {focusedLabels}
+          </div>
+        ) : (
+          <div className="absolute bottom-3 left-3 rounded-md border bg-popover/90 px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur">
+            No geographic data yet
+          </div>
+        )}
 
         {tooltipContent && (
           <div className="absolute right-3 top-3 rounded-md border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-sm">
@@ -273,22 +278,24 @@ export default function WorldMap({ countries }: WorldMapProps) {
         )}
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {stats.displayRows.slice(0, 6).map(row => {
-          const pct = Math.round((row.count / stats.maxCount) * 100);
-          return (
-            <div key={row.label} className="rounded-lg border bg-card p-3">
-              <div className="flex items-center justify-between gap-2 text-sm">
-                <span className="truncate font-medium">{row.label}</span>
-                <span className="font-mono text-xs text-muted-foreground">{row.count}</span>
+      {hasRows && (
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {stats.displayRows.slice(0, 6).map(row => {
+            const pct = Math.round((row.count / stats.maxCount) * 100);
+            return (
+              <div key={row.label} className="rounded-lg border bg-card p-3">
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="truncate font-medium">{row.label}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{row.count}</span>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+                </div>
               </div>
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
