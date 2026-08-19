@@ -9,6 +9,11 @@ import { Search, QrCode, Loader2, LayoutGrid, List } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
 import { QrCodeDialog } from "@/components/QrCodeDialog";
+import {
+  getEffectiveLinkStatus,
+  getEffectiveStatusClass,
+  getEffectiveStatusLabel,
+} from "@/lib/linkStatus";
 
 export default function QrCodesPage() {
   const { user, loading: authLoading } = useAuth();
@@ -47,6 +52,15 @@ export default function QrCodesPage() {
       title: link.title || link.shortCode,
     });
     setQrOpen(true);
+  };
+
+  const StatusPill = ({ link }: { link: any }) => {
+    const status = getEffectiveLinkStatus(link);
+    return (
+      <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${getEffectiveStatusClass(status)}`}>
+        {getEffectiveStatusLabel(status)}
+      </span>
+    );
   };
 
   if (authLoading) {
@@ -98,9 +112,9 @@ export default function QrCodesPage() {
               <Card key={link.id} className="flex min-w-0 cursor-pointer flex-col gap-3 p-4 transition-colors hover:bg-muted/30 sm:flex-row sm:items-center sm:gap-4" onClick={() => openQr(link)}>
                 <div className="w-fit rounded-md bg-muted p-2"><QrCode className="h-5 w-5 text-muted-foreground" /></div>
                 <div className="min-w-0 flex-1">
-                  <div className="flex min-w-0 items-center gap-2">
+                  <div className="flex min-w-0 items-center gap-2 flex-wrap">
                     <code className="truncate text-sm font-mono font-medium">/r/{link.shortCode}</code>
-                    {link.status === "paused" && <span className="shrink-0 rounded bg-yellow-100 px-1.5 py-0.5 text-[10px] text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">Paused</span>}
+                    <StatusPill link={link} />
                   </div>
                   {link.title && <p className="mt-0.5 truncate text-xs text-muted-foreground">{link.title}</p>}
                   <p className="truncate text-xs text-muted-foreground/70">{link.destinationUrl}</p>
@@ -125,7 +139,7 @@ export default function QrCodesPage() {
                   {link.title && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{link.title}</p>}
                   <p className="mt-1 text-[11px] text-muted-foreground/60">{link.clickCount.toLocaleString()} clicks</p>
                 </div>
-                {link.status === "paused" && <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-[10px] text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">Paused</span>}
+                <StatusPill link={link} />
               </Card>
             ))}
           </div>
