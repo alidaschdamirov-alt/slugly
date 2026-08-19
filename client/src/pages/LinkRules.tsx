@@ -8,11 +8,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import FeatureGateCard from "@/components/FeatureGateCard";
 import { toast } from "sonner";
 import { useState } from "react";
-import { useParams, useLocation } from "wouter";
-import { ArrowLeft, Plus, Trash2, Globe, Smartphone, FlaskConical, Link2, Eye } from "lucide-react";
+import { useParams } from "wouter";
+import { ArrowLeft, Plus, Trash2, Globe, Smartphone, FlaskConical, Link2, Eye, Loader2 } from "lucide-react";
 
 type RuleType = "geo" | "device" | "ab" | "deeplink" | "pixel";
 
@@ -26,13 +27,24 @@ const RULE_LABELS: Record<RuleType, { label: string; icon: any; description: str
 
 export default function LinkRules() {
   const { user } = useAuth({ redirectOnUnauthenticated: true });
-  const [, setLocation] = useLocation();
   const params = useParams<{ linkId: string }>();
   const linkId = parseInt(params.linkId || "0");
   const utils = trpc.useUtils();
 
-  const { data: rules, isLoading } = trpc.linkRules.list.useQuery({ linkId }, { enabled: !!linkId });
-  const { data: pixels } = trpc.pixels.list.useQuery();
+  const { data: billingStatus, isLoading: billingLoading } = trpc.billing.status.useQuery(undefined, { enabled: !!user });
+  const features = billingStatus?.planConfig?.features;
+  const canUseRedirectRules = !!features && (
+    features.geoTarget ||
+    features.abTest ||
+    features.deepLinks ||
+    features.pixels
+  );
+
+  const { data: rules, isLoading } = trpc.linkRules.list.useQuery(
+    { linkId },
+    { enabled: !!linkId && canUseRedirectRules }
+  );
+  const { data: pixels } = trpc.pixels.list.useQuery(undefined, { enabled: canUseRedirectRules });
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<RuleType>("geo");
@@ -68,7 +80,13 @@ export default function LinkRules() {
       setAddDialogOpen(false);
       utils.linkRules.list.invalidate({ linkId });
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err) => {
+      if (err.message?.includes("higher plan") || err.message?.includes("require")) {
+        toast.error("Redirect rules require Pro plan or higher.");
+      } else {
+        toast.error(err.message);
+      }
+    },
   });
 
   const deleteMutation = trpc.linkRules.delete.useMutation({
@@ -87,6 +105,11 @@ export default function LinkRules() {
   });
 
   const handleCreate = () => {
+    if (!canUseRedirectRules) {
+      toast.info("Redirect rules require Pro plan or higher.");
+      return;
+    }
+
     let config: Record<string, any> = {};
     switch (selectedType) {
       case "geo":
@@ -127,65 +150,81 @@ export default function LinkRules() {
           </div>
         </div>
 
-        {/* Existing rules */}
-        {isLoading ? (
-          <div className="text-center py-8 text-muted-foreground">Loading rules...</div>
-        ) : rules && rules.length > 0 ? (
-          <div className="space-y-3">
-            {rules.map((rule: any) => {
-              const meta = RULE_LABELS[rule.type as RuleType];
-              const Icon = meta?.icon || Globe;
-              return (
-                <Card key={rule.id}>
-                  <CardContent className="flex items-center justify-between py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <Icon className="h-4 w-4 text-primary" />
-                      </div>
-                      <div>
-                        <p className="font-medium text-sm">{meta?.label || rule.type}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Priority: {rule.priority} | {rule.enabled ? "Active" : "Disabled"}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={rule.enabled}
-                        onCheckedChange={(checked) => toggleMutation.mutate({ id: rule.id, linkId, enabled: checked })}
-                      />
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => deleteMutation.mutate({ id: rule.id, linkId })}>
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+        {billingLoading ? (
+          <Card><CardContent className="flex items-center justify-center gap-2 py-8 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />Checking plan access...</CardContent></Card>
+        ) : !canUseRedirectRules ? (
+          <FeatureGateCard
+            title="Redirect rules require Pro"
+            description="Unlock geo targeting, device redirects, A/B tests, deep links, and retargeting pixels for advanced campaigns."
+            requiredPlan="Pro"
+            featureLabel="Redirect rules"
+          />
         ) : (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-              <Globe className="h-10 w-10 text-muted-foreground mb-3" />
-              <p className="font-medium">No redirect rules</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Add rules to customize where visitors are redirected based on location, device, or A/B tests.
-              </p>
-            </CardContent>
-          </Card>
-        )}
+          <>
+            {/* Existing rules */}
+            {isLoading ? (
+              <div className="text-center py-8 text-muted-foreground">Loading rules...</div>
+            ) : rules && rules.length > 0 ? (
+              <div className="space-y-3">
+                {rules.map((rule: any) => {
+                  const meta = RULE_LABELS[rule.type as RuleType];
+                  const Icon = meta?.icon || Globe;
+                  return (
+                    <Card key={rule.id}>
+                      <CardContent className="flex items-center justify-between py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
+                            <Icon className="h-4 w-4 text-primary" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-sm">{meta?.label || rule.type}</p>
+                            <p className="text-xs text-muted-foreground">
+                              Priority: {rule.priority} | {rule.enabled ? "Active" : "Disabled"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={rule.enabled}
+                            onCheckedChange={(checked) => toggleMutation.mutate({ id: rule.id, linkId, enabled: checked })}
+                          />
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => deleteMutation.mutate({ id: rule.id, linkId })}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            ) : (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                  <Globe className="h-10 w-10 text-muted-foreground mb-3" />
+                  <p className="font-medium">No redirect rules</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Add rules to customize where visitors are redirected based on location, device, or A/B tests.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
 
-        {/* Add rule button */}
-        <Button onClick={() => setAddDialogOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Rule
-        </Button>
+            {/* Add rule button */}
+            <Button onClick={() => setAddDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Rule
+            </Button>
+          </>
+        )}
 
         {/* Add rule dialog */}
         <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
           <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Add Redirect Rule</DialogTitle>
+              <DialogDescription>
+                Configure advanced redirect behavior. Rules are available on Pro and higher plans.
+              </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div>
