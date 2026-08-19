@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { trpc } from "@/lib/trpc";
@@ -33,6 +34,7 @@ export default function LinkAnalytics() {
   const [editOpen, setEditOpen] = useState(false);
   const [editDest, setEditDest] = useState("");
   const [editTitle, setEditTitle] = useState("");
+  const [editProjectId, setEditProjectId] = useState<string>("none");
   const [editTags, setEditTags] = useState<string[]>([]);
   const [editUtmSource, setEditUtmSource] = useState("");
   const [editUtmMedium, setEditUtmMedium] = useState("");
@@ -46,11 +48,14 @@ export default function LinkAnalytics() {
     { id: linkId, days },
     { enabled: !!user && linkId > 0 }
   );
+  const { data: projects } = trpc.project.list.useQuery(undefined, { enabled: !!user });
   const utils = trpc.useUtils();
 
   const updateLink = trpc.link.update.useMutation({
     onSuccess: () => {
       utils.link.analytics.invalidate({ id: linkId });
+      utils.link.list.invalidate();
+      utils.project.list.invalidate();
       utils.tag.list.invalidate();
       setEditOpen(false);
       toast.success("Link updated");
@@ -61,6 +66,7 @@ export default function LinkAnalytics() {
   const toggleStatus = trpc.link.update.useMutation({
     onSuccess: () => {
       utils.link.analytics.invalidate({ id: linkId });
+      utils.link.list.invalidate();
       toast.success("Status updated");
     },
     onError: (err) => toast.error(err.message),
@@ -98,6 +104,7 @@ export default function LinkAnalytics() {
     if (data?.link) {
       setEditDest(data.link.destinationUrl);
       setEditTitle(data.link.title || "");
+      setEditProjectId(data.link.projectId ? String(data.link.projectId) : "none");
       setEditTags(data.link.tags || []);
       setEditUtmSource(data.link.utmSource || "");
       setEditUtmMedium(data.link.utmMedium || "");
@@ -114,6 +121,7 @@ export default function LinkAnalytics() {
       id: linkId,
       destinationUrl: editDest,
       title: editTitle || undefined,
+      projectId: editProjectId === "none" ? null : parseInt(editProjectId, 10),
       tags: editTags.length > 0 ? editTags : undefined,
       utmSource: editUtmSource || undefined,
       utmMedium: editUtmMedium || undefined,
@@ -344,7 +352,24 @@ export default function LinkAnalytics() {
               <Input value={editDest} onChange={e => setEditDest(e.target.value)} type="url" required />
               <p className="text-xs text-muted-foreground">Changing the URL preserves all click history</p>
             </div>
-            <div className="space-y-2"><Label>Title</Label><Input value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Optional title" /></div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-2"><Label>Title</Label><Input value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Optional title" /></div>
+              <div className="space-y-2">
+                <Label>Project</Label>
+                <Select value={editProjectId} onValueChange={setEditProjectId}>
+                  <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No project</SelectItem>
+                    {projects?.map((project: any) => (
+                      <SelectItem key={project.id} value={String(project.id)}>
+                        {project.name}{project.isSystem ? " (system)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">Move this link without losing click history.</p>
+              </div>
+            </div>
             <div className="space-y-2"><Label>Tags</Label><TagInput value={editTags} onChange={setEditTags} placeholder="Add tags..." /></div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5"><Label className="text-xs">UTM Source</Label><Input value={editUtmSource} onChange={e => setEditUtmSource(e.target.value)} className="h-9 text-sm" /></div>
