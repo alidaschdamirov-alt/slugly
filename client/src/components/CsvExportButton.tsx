@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
-import { Download, Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Download, Loader2, Lock } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -58,9 +59,13 @@ export default function CsvExportButton({ data, filename, isLoading, onFetch }: 
   };
 
   return (
-    <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting || isLoading}>
-      {exporting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
+    <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting || isLoading} className="gap-1.5">
+      {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
       Export CSV
+      <Badge variant="secondary" className="ml-1 gap-1 px-1.5 py-0 text-[10px]">
+        <Lock className="h-2.5 w-2.5" />
+        Pro
+      </Badge>
     </Button>
   );
 }
