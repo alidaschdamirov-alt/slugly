@@ -59,6 +59,7 @@ import LinkGridCard from "@/components/LinkGridCard";
 import TagInput from "@/components/TagInput";
 import { QrCodeDialog } from "@/components/QrCodeDialog";
 import { getEffectiveLinkStatus, getEffectiveStatusClass, getEffectiveStatusLabel } from "@/lib/linkStatus";
+import { getDestinationUrlError, normalizeDestinationUrl } from "../../../shared/validation/destination-url";
 
 type SortField = "clicks" | "createdAt" | "shortCode";
 type SortDir = "asc" | "desc";
@@ -83,6 +84,7 @@ export default function ProjectView() {
   const [editLinkOpen, setEditLinkOpen] = useState(false);
   const [editLinkId, setEditLinkId] = useState<number | null>(null);
   const [editLinkDest, setEditLinkDest] = useState("");
+  const [editLinkDestError, setEditLinkDestError] = useState("");
   const [editLinkTitle, setEditLinkTitle] = useState("");
   const [editLinkTags, setEditLinkTags] = useState<string[]>([]);
   const [editLinkUtmSource, setEditLinkUtmSource] = useState("");
@@ -170,6 +172,7 @@ export default function ProjectView() {
   const openEditLinkDialog = (link: any) => {
     setEditLinkId(link.id);
     setEditLinkDest(link.destinationUrl);
+    setEditLinkDestError("");
     setEditLinkTitle(link.title || "");
     setEditLinkTags(link.tags || []);
     setEditLinkUtmSource(link.utmSource || "");
@@ -191,9 +194,18 @@ export default function ProjectView() {
   const handleEditLinkSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editLinkId) return;
+
+    const urlError = getDestinationUrlError(editLinkDest);
+    if (urlError) {
+      setEditLinkDestError(urlError);
+      return;
+    }
+    const normalizedUrl = normalizeDestinationUrl(editLinkDest)!;
+    if (normalizedUrl !== editLinkDest) setEditLinkDest(normalizedUrl);
+
     updateLink.mutate({
       id: editLinkId,
-      destinationUrl: editLinkDest,
+      destinationUrl: normalizedUrl,
       title: editLinkTitle || undefined,
       tags: editLinkTags.length > 0 ? editLinkTags : undefined,
       utmSource: editLinkUtmSource || undefined,
@@ -676,18 +688,27 @@ export default function ProjectView() {
               Update the link details. The short code cannot be changed.
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleEditLinkSubmit} className="space-y-4 mt-2">
+          <form onSubmit={handleEditLinkSubmit} className="space-y-4 mt-2" noValidate>
             <div className="space-y-2">
               <Label>Destination URL</Label>
               <Input
                 value={editLinkDest}
-                onChange={e => setEditLinkDest(e.target.value)}
+                onChange={e => { setEditLinkDest(e.target.value); setEditLinkDestError(""); }}
+                onBlur={() => {
+                  const normalized = normalizeDestinationUrl(editLinkDest);
+                  if (normalized) setEditLinkDest(normalized);
+                }}
                 type="url"
+                aria-invalid={!!editLinkDestError}
                 required
               />
-              <p className="text-xs text-muted-foreground">
-                Changing the URL preserves all click history
-              </p>
+              {editLinkDestError ? (
+                <p className="text-xs text-destructive">{editLinkDestError}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Changing the URL preserves all click history
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Title</Label>
