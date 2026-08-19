@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
+import FeatureGateCard from "@/components/FeatureGateCard";
 import { ArrowLeft, Loader2, Zap, Copy, Check } from "lucide-react";
 import { useState } from "react";
 import { useLocation } from "wouter";
@@ -38,15 +39,25 @@ export default function BulkCreate() {
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
   const { data: projects } = trpc.project.list.useQuery(undefined, { enabled: !!user });
+  const { data: billingStatus, isLoading: billingLoading } = trpc.billing.status.useQuery(undefined, { enabled: !!user });
+  const canUseBulkCreate = billingStatus?.planConfig?.features?.bulkOps === true;
   const utils = trpc.useUtils();
   const createBulk = trpc.link.createBulk.useMutation({
     onSuccess: (data) => {
       setCreatedLinks(data);
       utils.link.list.invalidate();
       utils.tag.list.invalidate();
+      utils.billing.status.invalidate();
       toast.success(`${data.length} links created!`);
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err) => {
+      if (err.message?.includes("Bulk")) {
+        toast.error("Bulk create requires Pro plan or higher.");
+        setLocation("/billing");
+      } else {
+        toast.error(err.message);
+      }
+    },
   });
 
   if (authLoading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin" /></div>;
@@ -54,6 +65,10 @@ export default function BulkCreate() {
 
   const handleChannelSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canUseBulkCreate) {
+      setLocation("/billing");
+      return;
+    }
     if (!destinationUrl || selectedChannels.length === 0) return;
     const links = selectedChannels.map(channelId => {
       const channel = CHANNELS.find(c => c.id === channelId)!;
@@ -70,6 +85,10 @@ export default function BulkCreate() {
 
   const handleUrlsSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canUseBulkCreate) {
+      setLocation("/billing");
+      return;
+    }
     const urls = bulkUrls.split("\n").map(u => u.trim()).filter(u => u.length > 0);
     if (urls.length === 0) return;
     const links = urls.map(url => ({ destinationUrl: url }));
@@ -93,7 +112,19 @@ export default function BulkCreate() {
       <div className="max-w-2xl mx-auto">
         <h1 className="text-2xl font-semibold tracking-tight mb-6">Bulk Create Links</h1>
 
-        {createdLinks ? (
+        {billingLoading ? (
+          <Card className="p-8 flex items-center justify-center gap-2 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            Checking plan access...
+          </Card>
+        ) : !canUseBulkCreate ? (
+          <FeatureGateCard
+            title="Bulk create requires Pro"
+            description="Create many campaign links at once, auto-generate UTM variants, and speed up large launches by upgrading to Pro or higher."
+            requiredPlan="Pro"
+            featureLabel="Bulk create"
+          />
+        ) : createdLinks ? (
           <Card className="p-6">
             <h2 className="font-semibold mb-4">{createdLinks.length} Links Created</h2>
             <div className="space-y-2 max-h-96 overflow-y-auto">
