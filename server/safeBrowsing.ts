@@ -1,4 +1,5 @@
 import { ENV } from "./_core/env";
+import { normalizeDestinationUrl } from "../shared/validation/destination-url";
 
 /**
  * URL safety checker using Google Safe Browsing Lookup API v4.
@@ -50,7 +51,15 @@ function setCachedResult(hostname: string, result: SafetyResult) {
  * Check if a URL is safe. Returns { safe: true } or { safe: false, reason: "..." }.
  */
 export async function checkUrlSafety(url: string): Promise<SafetyResult> {
-  const hostname = getHostname(url);
+  const normalized = normalizeDestinationUrl(url);
+  if (!normalized) {
+    return {
+      safe: false,
+      reason: "Enter a valid URL, for example https://example.com/page",
+    };
+  }
+
+  const hostname = getHostname(normalized);
   if (!hostname) return { safe: false, reason: "Invalid URL" };
 
   // Check cache first
@@ -58,26 +67,35 @@ export async function checkUrlSafety(url: string): Promise<SafetyResult> {
   if (cached !== null) return cached;
 
   // Try Google Safe Browsing first
-  const apiKey = (ENV as any).SAFE_BROWSING_API_KEY || process.env.SAFE_BROWSING_API_KEY;
+  const apiKey =
+    (ENV as any).SAFE_BROWSING_API_KEY || process.env.SAFE_BROWSING_API_KEY;
   if (apiKey) {
-    const result = await checkGoogleSafeBrowsing(url, apiKey);
+    const result = await checkGoogleSafeBrowsing(normalized, apiKey);
     setCachedResult(hostname, result);
     return result;
   }
 
   // Fallback: URLhaus API (free, no key needed)
-  const result = await checkUrlhaus(url, hostname);
+  const result = await checkUrlhaus(normalized, hostname);
   setCachedResult(hostname, result);
   return result;
 }
 
-async function checkGoogleSafeBrowsing(url: string, apiKey: string): Promise<SafetyResult> {
+async function checkGoogleSafeBrowsing(
+  url: string,
+  apiKey: string
+): Promise<SafetyResult> {
   try {
     const endpoint = `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${apiKey}`;
     const body = {
       client: { clientId: "slugly", clientVersion: "1.0" },
       threatInfo: {
-        threatTypes: ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
+        threatTypes: [
+          "MALWARE",
+          "SOCIAL_ENGINEERING",
+          "UNWANTED_SOFTWARE",
+          "POTENTIALLY_HARMFUL_APPLICATION",
+        ],
         platformTypes: ["ANY_PLATFORM"],
         threatEntryTypes: ["URL"],
         threatEntries: [{ url }],
@@ -97,10 +115,13 @@ async function checkGoogleSafeBrowsing(url: string, apiKey: string): Promise<Saf
       return { safe: true };
     }
 
-    const data = await resp.json() as { matches?: any[] };
+    const data = (await resp.json()) as { matches?: any[] };
     if (data.matches && data.matches.length > 0) {
       const threatType = data.matches[0].threatType || "UNKNOWN";
-      return { safe: false, reason: `URL flagged as ${threatType.toLowerCase().replace(/_/g, " ")}` };
+      return {
+        safe: false,
+        reason: `URL flagged as ${threatType.toLowerCase().replace(/_/g, " ")}`,
+      };
     }
 
     return { safe: true };
@@ -111,7 +132,10 @@ async function checkGoogleSafeBrowsing(url: string, apiKey: string): Promise<Saf
   }
 }
 
-async function checkUrlhaus(url: string, hostname: string): Promise<SafetyResult> {
+async function checkUrlhaus(
+  url: string,
+  hostname: string
+): Promise<SafetyResult> {
   try {
     // URLhaus host lookup
     const resp = await fetch("https://urlhaus-api.abuse.ch/v1/host/", {
@@ -125,14 +149,17 @@ async function checkUrlhaus(url: string, hostname: string): Promise<SafetyResult
       return { safe: true }; // Fail-open
     }
 
-    const data = await resp.json() as { query_status?: string; urls?: any[] };
+    const data = (await resp.json()) as { query_status?: string; urls?: any[] };
     if (data.query_status === "no_results") {
       return { safe: true };
     }
 
     // If there are active URLs for this host, flag it
     if (data.urls && data.urls.some((u: any) => u.url_status === "online")) {
-      return { safe: false, reason: "URL host found in URLhaus malware database" };
+      return {
+        safe: false,
+        reason: "URL host found in URLhaus malware database",
+      };
     }
 
     return { safe: true };
