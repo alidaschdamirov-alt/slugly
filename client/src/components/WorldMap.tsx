@@ -2,6 +2,7 @@ import { ComposableMap, Geographies, Geography, ZoomableGroup } from "react-simp
 import { useMemo, useState } from "react";
 
 const GEO_URL = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
+const DEFAULT_CENTER: [number, number] = [10, 25];
 
 type CountryRow = { value: string | null; count: number };
 type CountryMeta = {
@@ -13,8 +14,8 @@ type CountryMeta = {
   aliases?: string[];
 };
 
-// Numeric ISO IDs are used by world-atlas. x/y are approximate map positions for
-// visible click markers, so users still see activity even if topojson names differ.
+// Numeric ISO IDs are used by world-atlas. x/y are kept only as legacy
+// display metadata; the map itself now highlights countries by fill.
 const COUNTRY_META: CountryMeta[] = [
   { code: "AZ", id: "031", name: "Azerbaijan", x: 57, y: 43, aliases: ["azerbaijan republic"] },
   { code: "US", id: "840", name: "United States", x: 21, y: 40, aliases: ["usa", "u.s.", "u.s.a.", "united states of america", "america"] },
@@ -92,6 +93,24 @@ const COUNTRY_META: CountryMeta[] = [
   { code: "GH", id: "288", name: "Ghana", x: 48, y: 63 },
 ];
 
+const COUNTRY_CENTER: Record<string, [number, number]> = {
+  AZ: [47.6, 40.3], US: [-98.6, 39.8], GB: [-2.5, 54.0], DE: [10.4, 51.2], FR: [2.2, 46.2],
+  CA: [-106.3, 56.1], AU: [133.8, -25.3], JP: [138.3, 36.2], CN: [104.2, 35.9], IN: [78.9, 22.6],
+  BR: [-51.9, -14.2], RU: [95.3, 61.5], KR: [127.8, 36.4], MX: [-102.6, 23.6], ES: [-3.7, 40.4],
+  IT: [12.6, 42.8], NL: [5.3, 52.1], SE: [18.6, 60.1], NO: [8.5, 60.5], DK: [9.5, 56.3],
+  FI: [25.7, 61.9], PL: [19.1, 52.1], TR: [35.2, 39.0], ID: [113.9, -0.8], TH: [100.9, 15.9],
+  VN: [108.3, 14.1], PH: [122.9, 12.9], MY: [101.9, 4.2], SG: [103.8, 1.35], AR: [-63.6, -38.4],
+  CO: [-74.3, 4.6], CL: [-71.5, -35.7], PE: [-75.0, -9.2], EG: [30.8, 26.8], NG: [8.7, 9.1],
+  ZA: [24.0, -29.0], KE: [37.9, 0.0], IL: [34.9, 31.0], AE: [54.4, 24.4], SA: [45.1, 23.9],
+  QA: [51.2, 25.3], KW: [47.5, 29.3], BH: [50.6, 26.1], OM: [57.0, 21.5], PK: [69.3, 30.4],
+  BD: [90.4, 23.7], UA: [31.2, 48.4], CZ: [15.5, 49.8], RO: [24.9, 45.9], HU: [19.5, 47.2],
+  PT: [-8.2, 39.4], BE: [4.5, 50.5], CH: [8.2, 46.8], AT: [14.6, 47.5], IE: [-8.2, 53.4],
+  NZ: [172.8, -41.8], TW: [121.0, 23.7], HK: [114.2, 22.3], GE: [43.4, 42.3], AM: [45.0, 40.1],
+  KZ: [66.9, 48.0], UZ: [64.6, 41.4], KG: [74.8, 41.2], TJ: [71.3, 38.9], TM: [59.6, 38.9],
+  IR: [53.7, 32.4], IQ: [43.7, 33.2], GR: [21.8, 39.1], CY: [33.4, 35.1], MA: [-7.1, 31.8],
+  TN: [9.5, 34.0], DZ: [1.7, 28.0], ET: [40.5, 9.1], GH: [-1.0, 7.9],
+};
+
 function normalizeKey(value: string) {
   return value.trim().toLowerCase().replace(/[._]/g, "").replace(/\s+/g, " ");
 }
@@ -138,11 +157,6 @@ function getCountryMeta(value: string | null) {
   return COUNTRY_INDEX.get(normalizeKey(trimmed)) || COUNTRY_INDEX.get(normalizeNumericId(trimmed)) || null;
 }
 
-function getMarkerSize(count: number, maxCount: number) {
-  const ratio = Math.max(0.18, count / Math.max(maxCount, 1));
-  return Math.round(10 + ratio * 18);
-}
-
 interface WorldMapProps {
   countries: CountryRow[];
 }
@@ -172,14 +186,28 @@ export default function WorldMap({ countries }: WorldMapProps) {
       }
     }
 
-    return { displayRows, maxCount, countById };
+    const locatedRows = displayRows.filter(row => row.meta && COUNTRY_CENTER[row.meta.code]);
+    let center: [number, number] = DEFAULT_CENTER;
+    let zoom = 1;
+    if (locatedRows.length > 0) {
+      const total = locatedRows.reduce((sum, row) => sum + row.count, 0) || 1;
+      const weightedLon = locatedRows.reduce((sum, row) => sum + COUNTRY_CENTER[row.meta!.code][0] * row.count, 0) / total;
+      const weightedLat = locatedRows.reduce((sum, row) => sum + COUNTRY_CENTER[row.meta!.code][1] * row.count, 0) / total;
+      const lons = locatedRows.map(row => COUNTRY_CENTER[row.meta!.code][0]);
+      const lats = locatedRows.map(row => COUNTRY_CENTER[row.meta!.code][1]);
+      const spread = Math.max(Math.max(...lons) - Math.min(...lons), Math.max(...lats) - Math.min(...lats));
+      center = [Math.max(-160, Math.min(170, weightedLon)), Math.max(-55, Math.min(70, weightedLat))];
+      zoom = spread <= 8 ? 4.5 : spread <= 22 ? 3 : spread <= 55 ? 1.9 : 1.15;
+    }
+
+    return { displayRows, maxCount, countById, center, zoom };
   }, [countries]);
 
   const getColor = (geoId: string | number | undefined) => {
     const count = stats.countById.get(normalizeNumericId(geoId));
     if (!count) return "hsl(var(--muted))";
-    const intensity = Math.max(0.2, count / stats.maxCount);
-    return `oklch(0.56 ${0.14 + 0.08 * intensity} 270 / ${0.35 + intensity * 0.55})`;
+    const intensity = Math.max(0.22, count / stats.maxCount);
+    return `oklch(0.56 ${0.14 + 0.08 * intensity} 270 / ${0.38 + intensity * 0.56})`;
   };
 
   if (countries.length === 0 || stats.displayRows.length === 0) {
@@ -190,15 +218,17 @@ export default function WorldMap({ countries }: WorldMapProps) {
     );
   }
 
+  const focusedLabels = stats.displayRows.slice(0, 3).map(row => row.label).join(", ");
+
   return (
     <div className="space-y-4">
       <div className="relative h-[220px] w-full overflow-hidden rounded-xl border bg-muted/20 sm:h-[250px]">
         <ComposableMap
           projection="geoMercator"
-          projectionConfig={{ scale: 115, center: [10, 25] }}
+          projectionConfig={{ scale: 115, center: DEFAULT_CENTER }}
           className="h-full w-full"
         >
-          <ZoomableGroup zoom={1} center={[10, 25]}>
+          <ZoomableGroup zoom={stats.zoom} center={stats.center}>
             <Geographies geography={GEO_URL}>
               {({ geographies }) =>
                 geographies.map((geo) => {
@@ -209,8 +239,8 @@ export default function WorldMap({ countries }: WorldMapProps) {
                       key={geo.rsmKey}
                       geography={geo}
                       fill={getColor(geo.id)}
-                      stroke="hsl(var(--border))"
-                      strokeWidth={0.45}
+                      stroke={count ? "oklch(0.56 0.2 270)" : "hsl(var(--border))"}
+                      strokeWidth={count ? 0.9 : 0.4}
                       style={{
                         default: { outline: "none" },
                         hover: {
@@ -232,28 +262,9 @@ export default function WorldMap({ countries }: WorldMapProps) {
           </ZoomableGroup>
         </ComposableMap>
 
-        {stats.displayRows
-          .filter(row => row.meta)
-          .slice(0, 12)
-          .map(row => {
-            const size = getMarkerSize(row.count, stats.maxCount);
-            return (
-              <button
-                key={`${row.label}-${row.count}`}
-                type="button"
-                className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-primary/80 shadow-lg transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-primary"
-                style={{
-                  left: `${row.meta!.x}%`,
-                  top: `${row.meta!.y}%`,
-                  width: size,
-                  height: size,
-                }}
-                onMouseEnter={() => setTooltipContent(`${row.label}: ${row.count} clicks`)}
-                onMouseLeave={() => setTooltipContent("")}
-                aria-label={`${row.label}: ${row.count} clicks`}
-              />
-            );
-          })}
+        <div className="absolute bottom-3 left-3 rounded-md border bg-popover/90 px-2.5 py-1.5 text-xs text-popover-foreground shadow-sm backdrop-blur">
+          Focus: {focusedLabels}
+        </div>
 
         {tooltipContent && (
           <div className="absolute right-3 top-3 rounded-md border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-sm">
