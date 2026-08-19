@@ -33,7 +33,9 @@ import {
   getEffectiveStatusLabel,
 } from "@/lib/linkStatus";
 import { trpc } from "@/lib/trpc";
+import { normalizeDestinationUrl } from "@shared/validation/destination-url";
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowLeft,
   ArrowUp,
@@ -181,6 +183,10 @@ export default function ProjectView() {
     return result;
   }, [links, search, statusFilter, tagFilter, sortField, sortDir]);
 
+  const invalidDestinationLinks = useMemo(() => {
+    return (links || []).filter(link => normalizeDestinationUrl(link.destinationUrl) === null);
+  }, [links]);
+
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
     for (const link of links || []) {
@@ -227,6 +233,11 @@ export default function ProjectView() {
     setEditDesc(project.description || "");
     setEditColor(project.color);
     setEditProjectOpen(true);
+  };
+
+  const openEditLinkDialog = (link: any) => {
+    setEditLinkRecord(link);
+    setEditLinkOpen(true);
   };
 
   const handleToggleStatus = (link: any, event: MouseEvent) => {
@@ -345,6 +356,10 @@ export default function ProjectView() {
         </div>
       </div>
 
+      {invalidDestinationLinks.length > 0 && (
+        <InvalidDestinationBanner links={invalidDestinationLinks} onEdit={openEditLinkDialog} />
+      )}
+
       {linksLoading ? (
         <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       ) : filteredAndSortedLinks.length === 0 ? (
@@ -365,10 +380,7 @@ export default function ProjectView() {
               link={link}
               sparklineData={sparklines?.[link.id]}
               onClick={() => setLocation(`/link/${link.id}/analytics`)}
-              onEdit={() => {
-                setEditLinkRecord(link);
-                setEditLinkOpen(true);
-              }}
+              onEdit={() => openEditLinkDialog(link)}
               onToggleStatus={event => handleToggleStatus(link, event)}
               onDelete={event => {
                 event.stopPropagation();
@@ -383,10 +395,7 @@ export default function ProjectView() {
         <LinksTable
           links={filteredAndSortedLinks}
           onClickLink={id => setLocation(`/link/${id}/analytics`)}
-          onEditLink={link => {
-            setEditLinkRecord(link);
-            setEditLinkOpen(true);
-          }}
+          onEditLink={openEditLinkDialog}
           onToggleStatus={handleToggleStatus}
           onDeleteLink={(id, event) => {
             event.stopPropagation();
@@ -482,6 +491,34 @@ export default function ProjectView() {
   );
 }
 
+function InvalidDestinationBanner({ links, onEdit }: { links: any[]; onEdit: (link: any) => void }) {
+  return (
+    <div className="mb-4 rounded-xl border border-destructive/30 bg-destructive/10 p-4">
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-destructive">
+            {links.length} link{links.length !== 1 ? "s" : ""} point{links.length === 1 ? "s" : ""} to an unreachable address
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">Review and update the destination URL. Existing click history will be preserved.</p>
+          <div className="mt-3 space-y-2">
+            {links.slice(0, 5).map(link => (
+              <div key={link.id} className="flex flex-col gap-2 rounded-lg border bg-background/80 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <code className="text-xs font-mono">/r/{link.shortCode}</code>
+                  <p className="truncate text-xs text-muted-foreground">{link.destinationUrl}</p>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => onEdit(link)}>Edit destination</Button>
+              </div>
+            ))}
+            {links.length > 5 && <p className="text-xs text-muted-foreground">+{links.length - 5} more invalid links</p>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProjectViewSkeleton() {
   return (
     <AppShell>
@@ -499,9 +536,7 @@ function ProjectViewSkeleton() {
         </div>
       </div>
       <div className="space-y-3">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="h-24 rounded-lg border bg-card animate-pulse" />
-        ))}
+        {Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-24 rounded-lg border bg-card animate-pulse" />)}
       </div>
     </AppShell>
   );
