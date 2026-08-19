@@ -16,25 +16,9 @@ import { toast } from "sonner";
 import TagInput from "@/components/TagInput";
 import { UpsellDialog, parseLimitError } from "@/components/UpsellDialog";
 import { getNextPlan } from "../../../shared/plans";
+import { DESTINATION_URL_ERROR, normalizeDestinationUrl } from "@shared/validation/destination-url";
 
 const CUSTOM_CODE_RE = /^[a-zA-Z0-9_-]+$/;
-
-function normalizeDestinationUrl(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  const withProtocol = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmed)
-    ? trimmed
-    : `https://${trimmed}`;
-
-  try {
-    const parsed = new URL(withProtocol);
-    if (!parsed.hostname || !["http:", "https:"].includes(parsed.protocol)) return null;
-    return parsed.toString();
-  } catch {
-    return null;
-  }
-}
 
 function getFriendlyError(message: string) {
   try {
@@ -43,7 +27,7 @@ function getFriendlyError(message: string) {
       const customCodeIssue = parsed.find((issue: any) => issue?.path?.includes("customCode"));
       if (customCodeIssue) return "Custom short code can contain only Latin letters, numbers, hyphens, and underscores.";
       const urlIssue = parsed.find((issue: any) => issue?.path?.includes("destinationUrl"));
-      if (urlIssue) return "Enter a valid destination URL.";
+      if (urlIssue) return DESTINATION_URL_ERROR;
     }
   } catch {
     // Not a JSON/Zod error.
@@ -52,6 +36,8 @@ function getFriendlyError(message: string) {
   if (message.includes("Invalid string") && message.includes("customCode")) {
     return "Custom short code can contain only Latin letters, numbers, hyphens, and underscores.";
   }
+
+  if (message.includes("Enter a valid URL")) return DESTINATION_URL_ERROR;
 
   return message || "Something went wrong. Please try again.";
 }
@@ -114,7 +100,9 @@ export default function CreateLink() {
         setUpsellError(limitErr);
         setUpsellOpen(true);
       } else {
-        toast.error(getFriendlyError(err.message));
+        const message = getFriendlyError(err.message);
+        if (message === DESTINATION_URL_ERROR) setUrlError(message);
+        else toast.error(message);
       }
     },
   });
@@ -149,7 +137,7 @@ export default function CreateLink() {
 
     const normalizedUrl = normalizeDestinationUrl(url);
     if (!normalizedUrl) {
-      setUrlError("Enter a valid URL, for example https://example.com.");
+      setUrlError(DESTINATION_URL_ERROR);
       return;
     }
 
