@@ -12,10 +12,41 @@ import { Globe, Plus, Loader2, CheckCircle2, XCircle, Trash2, Copy, AlertTriangl
 import { useState } from "react";
 import { toast } from "sonner";
 
+function normalizeHostname(value: string): string {
+  return value
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .replace(/\/.*$/, "")
+    .replace(/\.$/, "")
+    .toLowerCase();
+}
+
+function validateHostname(value: string): string | null {
+  const hostname = normalizeHostname(value);
+  const labels = hostname.split(".");
+
+  if (!hostname) return "Enter a domain, for example go.yourbrand.com.";
+  if (hostname.length > 253) return "Domain is too long.";
+  if (labels.length < 2) return "Enter a full domain or subdomain, for example go.yourbrand.com.";
+  if (labels.some(label => label.length < 1 || label.length > 63)) {
+    return "Every domain part must be between 1 and 63 characters.";
+  }
+  if (labels.some(label => !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label))) {
+    return "Use only letters, numbers, and hyphens. Spaces and symbols are not allowed.";
+  }
+  if (/^\d+$/.test(labels[labels.length - 1])) {
+    return "Top-level domain cannot be only numbers.";
+  }
+
+  return null;
+}
+
 export default function DomainsPage() {
   const { user, loading: authLoading } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
   const [hostname, setHostname] = useState("");
+  const [hostnameError, setHostnameError] = useState("");
 
   const { data: domains, isLoading } = trpc.domain.list.useQuery(undefined, { enabled: !!user });
   const utils = trpc.useUtils();
@@ -25,6 +56,7 @@ export default function DomainsPage() {
       utils.domain.list.invalidate();
       setAddOpen(false);
       setHostname("");
+      setHostnameError("");
       toast.success("Domain added! Follow the DNS instructions to verify.");
     },
     onError: (err) => toast.error(err.message),
@@ -48,6 +80,21 @@ export default function DomainsPage() {
   if (authLoading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin" /></div>;
   if (!user) { window.location.href = getLoginUrl(); return null; }
 
+  const handleAddDomain = (e: React.FormEvent) => {
+    e.preventDefault();
+    const error = validateHostname(hostname);
+    const normalized = normalizeHostname(hostname);
+
+    if (error) {
+      setHostnameError(error);
+      return;
+    }
+
+    setHostname(normalized);
+    setHostnameError("");
+    createDomain.mutate({ hostname: normalized });
+  };
+
   return (
     <AppShell>
       <div className="max-w-3xl mx-auto">
@@ -56,7 +103,7 @@ export default function DomainsPage() {
             <h1 className="text-2xl font-semibold tracking-tight">Custom Domains</h1>
             <p className="text-muted-foreground mt-1">Use your own domain for short links</p>
           </div>
-          <Dialog open={addOpen} onOpenChange={setAddOpen}>
+          <Dialog open={addOpen} onOpenChange={(open) => { setAddOpen(open); if (!open) setHostnameError(""); }}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="h-4 w-4 mr-2" />
@@ -67,13 +114,27 @@ export default function DomainsPage() {
               <DialogHeader>
                 <DialogTitle>Add Custom Domain</DialogTitle>
               </DialogHeader>
-              <form onSubmit={(e) => { e.preventDefault(); createDomain.mutate({ hostname }); }} className="space-y-4 mt-2">
+              <form onSubmit={handleAddDomain} className="space-y-4 mt-2" noValidate>
                 <div className="space-y-2">
                   <Label>Domain</Label>
-                  <Input value={hostname} onChange={e => setHostname(e.target.value)} placeholder="go.yourbrand.com" required />
-                  <p className="text-xs text-muted-foreground">Enter the subdomain you want to use for short links</p>
+                  <Input
+                    value={hostname}
+                    onChange={e => {
+                      setHostname(e.target.value);
+                      setHostnameError("");
+                    }}
+                    onBlur={() => setHostname(normalizeHostname(hostname))}
+                    placeholder="go.yourbrand.com"
+                    aria-invalid={!!hostnameError}
+                    required
+                  />
+                  {hostnameError ? (
+                    <p className="text-xs text-destructive">{hostnameError}</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Enter the subdomain you want to use for short links. Do not include spaces, paths, or symbols.</p>
+                  )}
                 </div>
-                <Button type="submit" className="w-full" disabled={createDomain.isPending || !hostname}>
+                <Button type="submit" className="w-full" disabled={createDomain.isPending || !hostname.trim()}>
                   {createDomain.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                   Add Domain
                 </Button>
@@ -130,7 +191,16 @@ export default function DomainsPage() {
                         </Button>
                       </div>
                     )}
-                    <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => deleteDomain.mutate({ id: domain.id })}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 text-destructive"
+                      onClick={() => {
+                        if (window.confirm(`Remove ${domain.hostname}? DNS records at your registrar will not be changed automatically.`)) {
+                          deleteDomain.mutate({ id: domain.id });
+                        }
+                      }}
+                    >
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
@@ -165,7 +235,7 @@ export default function DomainsPage() {
 
                       <div className="space-y-1">
                         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">2. CNAME Record (traffic routing)</p>
-                        <code className="block bg-background px-3 py-2 rounded border text-xs font-mono">
+                        <code className="block bg-background px-3 py-2 rounded border text-xs font-mono overflow-x-auto">
                           {domain.hostname} CNAME links.slugly.app
                         </code>
                       </div>
@@ -181,7 +251,7 @@ export default function DomainsPage() {
             <Globe className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="font-medium text-lg mb-2">No custom domains</h3>
             <p className="text-muted-foreground mb-4 text-sm">
-              Add your own domain to brand your short links (Pro plan required)
+              Add a domain for DNS verification now. Traffic routing is coming soon.
             </p>
             <Button onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
