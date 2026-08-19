@@ -3,10 +3,6 @@ import AppShell from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
@@ -20,10 +16,9 @@ import { useEffect, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
-import TagInput from "@/components/TagInput";
 import { QrCodeDialog } from "@/components/QrCodeDialog";
 import CsvExportButton from "@/components/CsvExportButton";
-import { getDestinationUrlError, normalizeDestinationUrl } from "../../../shared/validation/destination-url";
+import EditLinkDialog, { type EditLinkDialogPayload } from "@/components/EditLinkDialog";
 
 export default function LinkAnalytics() {
   const { user, loading: authLoading } = useAuth();
@@ -33,16 +28,6 @@ export default function LinkAnalytics() {
   const [copied, setCopied] = useState(false);
   const [days, setDays] = useState(30);
   const [editOpen, setEditOpen] = useState(false);
-  const [editDest, setEditDest] = useState("");
-  const [editDestError, setEditDestError] = useState("");
-  const [editTitle, setEditTitle] = useState("");
-  const [editProjectId, setEditProjectId] = useState<string>("none");
-  const [editTags, setEditTags] = useState<string[]>([]);
-  const [editUtmSource, setEditUtmSource] = useState("");
-  const [editUtmMedium, setEditUtmMedium] = useState("");
-  const [editUtmCampaign, setEditUtmCampaign] = useState("");
-  const [editUtmTerm, setEditUtmTerm] = useState("");
-  const [editUtmContent, setEditUtmContent] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [uniqueClicksFromApi, setUniqueClicksFromApi] = useState<number | null>(null);
@@ -119,45 +104,8 @@ export default function LinkAnalytics() {
     }
   };
 
-  const openEditDialog = () => {
-    if (data?.link) {
-      setEditDest(data.link.destinationUrl);
-      setEditDestError("");
-      setEditTitle(data.link.title || "");
-      setEditProjectId(data.link.projectId ? String(data.link.projectId) : "none");
-      setEditTags(data.link.tags || []);
-      setEditUtmSource(data.link.utmSource || "");
-      setEditUtmMedium(data.link.utmMedium || "");
-      setEditUtmCampaign(data.link.utmCampaign || "");
-      setEditUtmTerm(data.link.utmTerm || "");
-      setEditUtmContent(data.link.utmContent || "");
-      setEditOpen(true);
-    }
-  };
-
-  const handleEditSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const urlError = getDestinationUrlError(editDest);
-    if (urlError) {
-      setEditDestError(urlError);
-      return;
-    }
-    const normalizedUrl = normalizeDestinationUrl(editDest)!;
-    if (normalizedUrl !== editDest) setEditDest(normalizedUrl);
-
-    updateLink.mutate({
-      id: linkId,
-      destinationUrl: normalizedUrl,
-      title: editTitle || undefined,
-      projectId: editProjectId === "none" ? null : parseInt(editProjectId, 10),
-      tags: editTags.length > 0 ? editTags : undefined,
-      utmSource: editUtmSource || undefined,
-      utmMedium: editUtmMedium || undefined,
-      utmCampaign: editUtmCampaign || undefined,
-      utmTerm: editUtmTerm || undefined,
-      utmContent: editUtmContent || undefined,
-    });
+  const handleEditSubmit = (payload: EditLinkDialogPayload) => {
+    updateLink.mutate(payload);
   };
 
   const handleToggleStatus = () => {
@@ -242,7 +190,7 @@ export default function LinkAnalytics() {
                   <QrCode className="h-3.5 w-3.5 mr-1.5" />
                   QR
                 </Button>
-                <Button variant="outline" size="sm" onClick={openEditDialog}>
+                <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
                   <Pencil className="h-3.5 w-3.5 mr-1.5" />
                   Edit
                 </Button>
@@ -369,62 +317,14 @@ export default function LinkAnalytics() {
         </div>
       )}
 
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Edit Link</DialogTitle>
-            <DialogDescription>Update the link details. The short code cannot be changed.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleEditSubmit} className="space-y-4 mt-2" noValidate>
-            <div className="space-y-2">
-              <Label>Destination URL</Label>
-              <Input
-                value={editDest}
-                onChange={e => { setEditDest(e.target.value); setEditDestError(""); }}
-                onBlur={() => {
-                  const normalized = normalizeDestinationUrl(editDest);
-                  if (normalized) setEditDest(normalized);
-                }}
-                type="url"
-                aria-invalid={!!editDestError}
-                required
-              />
-              {editDestError ? (
-                <p className="text-xs text-destructive">{editDestError}</p>
-              ) : (
-                <p className="text-xs text-muted-foreground">Changing the URL preserves all click history</p>
-              )}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-2"><Label>Title</Label><Input value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Optional title" /></div>
-              <div className="space-y-2">
-                <Label>Project</Label>
-                <Select value={editProjectId} onValueChange={setEditProjectId}>
-                  <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No project</SelectItem>
-                    {projects?.map((project: any) => (
-                      <SelectItem key={project.id} value={String(project.id)}>
-                        {project.name}{project.isSystem ? " (system)" : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">Move this link without losing click history.</p>
-              </div>
-            </div>
-            <div className="space-y-2"><Label>Tags</Label><TagInput value={editTags} onChange={setEditTags} placeholder="Add tags..." /></div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><Label className="text-xs">UTM Source</Label><Input value={editUtmSource} onChange={e => setEditUtmSource(e.target.value)} className="h-9 text-sm" /></div>
-              <div className="space-y-1.5"><Label className="text-xs">UTM Medium</Label><Input value={editUtmMedium} onChange={e => setEditUtmMedium(e.target.value)} className="h-9 text-sm" /></div>
-              <div className="space-y-1.5"><Label className="text-xs">UTM Campaign</Label><Input value={editUtmCampaign} onChange={e => setEditUtmCampaign(e.target.value)} className="h-9 text-sm" /></div>
-              <div className="space-y-1.5"><Label className="text-xs">UTM Term</Label><Input value={editUtmTerm} onChange={e => setEditUtmTerm(e.target.value)} className="h-9 text-sm" /></div>
-              <div className="space-y-1.5 col-span-2"><Label className="text-xs">UTM Content</Label><Input value={editUtmContent} onChange={e => setEditUtmContent(e.target.value)} className="h-9 text-sm" /></div>
-            </div>
-            <Button type="submit" className="w-full" disabled={updateLink.isPending || !editDest}>{updateLink.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}Save Changes</Button>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <EditLinkDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        link={data?.link ?? null}
+        projects={projects}
+        isPending={updateLink.isPending}
+        onSubmit={handleEditSubmit}
+      />
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
