@@ -113,11 +113,37 @@ function AnalyticsRouteTracker() {
   return null;
 }
 
+function normalizeLandingCopy() {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const replacements = [
+    ["Bring your own domain when you're ready.", "Upgrade when you're ready for more links, analytics, and team workflows."],
+    ["slug.ly/", "slugly.io/r/"],
+    ["slug.ly", "slugly.io"],
+  ] as const;
+
+  const nodes: Text[] = [];
+  let current = walker.nextNode();
+  while (current) {
+    nodes.push(current as Text);
+    current = walker.nextNode();
+  }
+
+  for (const node of nodes) {
+    let nextValue = node.nodeValue || "";
+    for (const [from, to] of replacements) {
+      nextValue = nextValue.split(from).join(to);
+    }
+    if (nextValue !== node.nodeValue) node.nodeValue = nextValue;
+  }
+}
+
 function LandingPricingLinkInjector() {
   const [location] = useLocation();
 
   useEffect(() => {
     if (location !== "/" || typeof document === "undefined") return;
+
+    normalizeLandingCopy();
 
     const createPricingLink = (variant: "nav" | "footer") => {
       const link = document.createElement("a");
