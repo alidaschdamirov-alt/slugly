@@ -5,8 +5,9 @@ export const DESTINATION_URL_ERROR =
 
 export const EMPTY_DESTINATION_URL_ERROR = "Enter a destination URL.";
 
-const HOSTNAME_RE =
-  /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{1,62}$/i;
+const LABEL_RE = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
+const TLD_RE = "(?:[a-z]{2,63}|xn--[a-z0-9-]{2,59})";
+const HOSTNAME_RE = new RegExp(`^(?=.{1,253}$)(?:${LABEL_RE}\\.)+${TLD_RE}$`, "i");
 
 const IPV4_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
 
