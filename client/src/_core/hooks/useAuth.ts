@@ -67,10 +67,14 @@ export function useAuth(options?: UseAuthOptions) {
       identifyUser(String(state.user.id), {
         name: state.user.name,
         email: state.user.email,
-        plan: state.user.plan,
+        plan: state.workspace?.plan ?? state.user.plan,
+        userPlan: state.user.plan,
+        workspaceId: state.workspace?.id,
+        workspacePlan: state.workspace?.plan,
+        membershipRole: state.membership?.role,
       });
     }
-  }, [state.user]);
+  }, [state.user, state.workspace, state.membership]);
 
   useEffect(() => {
     if (!redirectOnUnauthenticated || !isLoaded) return;
