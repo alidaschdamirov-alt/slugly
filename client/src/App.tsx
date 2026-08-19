@@ -1,11 +1,12 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Route, Switch, useLocation } from "wouter";
+import { useEffect } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import CookieConsent from "./components/CookieConsent";
-import { initAnalytics } from "@/lib/analytics";
+import { initAnalytics, trackPageView } from "@/lib/analytics";
 import Home from "./pages/Home";
 import Dashboard from "./pages/Dashboard";
 import ProjectView from "./pages/ProjectView";
@@ -70,6 +71,16 @@ function AppRoutes() {
   );
 }
 
+function AnalyticsRouteTracker() {
+  const [location] = useLocation();
+
+  useEffect(() => {
+    trackPageView(location);
+  }, [location]);
+
+  return null;
+}
+
 // Initialize analytics (respects stored consent)
 initAnalytics();
 
@@ -79,6 +90,7 @@ function App() {
       <ThemeProvider defaultTheme="light" switchable>
         <TooltipProvider>
           <Toaster />
+          <AnalyticsRouteTracker />
           <AppRoutes />
           <CookieConsent />
         </TooltipProvider>
