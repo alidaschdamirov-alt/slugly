@@ -1,11 +1,11 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import AppShell from "@/components/AppShell";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
 import FeatureGateCard from "@/components/FeatureGateCard";
+import { FeatureAccessSkeleton, ListPageSkeleton } from "@/components/PageSkeleton";
 import { Loader2, BarChart3, TrendingUp } from "lucide-react";
 import { useState } from "react";
 
@@ -66,10 +66,7 @@ export default function CampaignDashboard() {
         </div>
 
         {billingLoading ? (
-          <Card className="p-8 flex items-center justify-center gap-2 text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            Checking plan access...
-          </Card>
+          <FeatureAccessSkeleton />
         ) : !canUseCampaignDashboard || isGated ? (
           <FeatureGateCard
             title="Campaign Dashboard requires Starter"
@@ -79,11 +76,7 @@ export default function CampaignDashboard() {
           />
         ) : (
           <>
-            {isLoading && (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-6 w-6 animate-spin" />
-              </div>
-            )}
+            {isLoading && <ListPageSkeleton rows={3} />}
 
             {error && !isGated && (
               <Card className="p-6 border-destructive/30">
