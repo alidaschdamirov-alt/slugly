@@ -8,6 +8,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import CookieConsent from "./components/CookieConsent";
 import { initAnalytics, trackEvent, trackPageView } from "@/lib/analytics";
 import Home from "./pages/Home";
+import PricingPage from "./pages/PricingPage";
 import Dashboard from "./pages/Dashboard";
 import ProjectView from "./pages/ProjectView";
 import LinkAnalytics from "./pages/LinkAnalytics";
@@ -38,6 +39,7 @@ function AppRoutes() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/pricing" component={PricingPage} />
       <Route path="/auth" component={AuthPage} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/project/:id" component={ProjectView} />
@@ -45,6 +47,7 @@ function AppRoutes() {
       <Route path="/link/:id/analytics" component={LinkAnalytics} />
       <Route path="/link/:linkId/rules" component={LinkRules} />
       <Route path="/create" component={CreateLink} />
+      <Route path="/links/new" component={CreateLink} />
       <Route path="/create/bulk" component={BulkCreate} />
       <Route path="/domains" component={DomainsPage} />
       <Route path="/billing" component={BillingPage} />
@@ -53,6 +56,7 @@ function AppRoutes() {
       <Route path="/tags/:tag" component={TagAnalytics} />
       <Route path="/qr" component={QrCodesPage} />
       <Route path="/report" component={ReportPage} />
+      <Route path="/reports" component={ExportReport} />
       <Route path="/team" component={Team} />
       <Route path="/utm-templates" component={UtmTemplates} />
       <Route path="/campaigns" component={CampaignDashboard} />
@@ -73,10 +77,11 @@ function AppRoutes() {
 
 function getRouteEvent(location: string) {
   if (location === "/") return "home_opened";
+  if (location.startsWith("/pricing")) return "pricing_opened";
   if (location.startsWith("/auth")) return "auth_opened";
   if (location.startsWith("/dashboard")) return "dashboard_opened";
   if (location.startsWith("/create/bulk")) return "bulk_create_opened";
-  if (location.startsWith("/create")) return "create_link_opened";
+  if (location.startsWith("/create") || location.startsWith("/links/new")) return "create_link_opened";
   if (/^\/project\/[^/]+\/analytics/.test(location)) return "project_analytics_opened";
   if (/^\/project\/[^/]+/.test(location)) return "project_opened";
   if (/^\/link\/[^/]+\/analytics/.test(location)) return "link_analytics_opened";
@@ -87,6 +92,7 @@ function getRouteEvent(location: string) {
   if (location.startsWith("/tags")) return "tags_opened";
   if (location.startsWith("/campaigns")) return "campaigns_opened";
   if (location.startsWith("/compare")) return "comparison_opened";
+  if (location.startsWith("/reports") || location.startsWith("/export-report")) return "reports_opened";
   if (location.startsWith("/invite")) return "invite_accept_opened";
   if (location.startsWith("/admin")) return "admin_opened";
   return null;
@@ -107,7 +113,6 @@ function AnalyticsRouteTracker() {
   return null;
 }
 
-// Initialize analytics (respects stored consent)
 initAnalytics();
 
 function App() {
