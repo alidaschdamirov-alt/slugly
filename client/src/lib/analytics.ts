@@ -23,6 +23,7 @@ const CONSENT_KEY = "slugly_analytics_consent";
 let initialized = false;
 let consentGranted = false;
 let lastTrackedPage = "";
+let clickTrackingInstalled = false;
 
 /**
  * Check if user has previously granted analytics consent.
@@ -60,6 +61,7 @@ export function setAnalyticsConsent(granted: boolean) {
   if (granted) {
     consentGranted = true;
     initTrackers();
+    trackEvent("analytics_consent_granted", { source: "cookie_banner" });
     trackPageView();
   } else {
     consentGranted = false;
@@ -94,6 +96,8 @@ function initTrackers() {
   if (initialized) return;
   initialized = true;
 
+  installClickTracking();
+
   // Amplitude
   if (AMPLITUDE_KEY) {
     amplitude.init(AMPLITUDE_KEY, {
@@ -125,6 +129,8 @@ function initTrackers() {
       send_page_view: false,
     });
   }
+
+  exposeDebugApi();
 }
 
 function getPagePath(path?: string) {
@@ -180,14 +186,19 @@ export function trackEvent(name: string, properties?: Record<string, any>) {
 
   initTrackers();
 
+  const enrichedProperties = {
+    path: typeof window !== "undefined" ? window.location.pathname : undefined,
+    ...properties,
+  };
+
   // Amplitude
   if (AMPLITUDE_KEY && initialized) {
-    amplitude.track(name, properties);
+    amplitude.track(name, enrichedProperties);
   }
 
   // GA4
   if (GA_ID && typeof window.gtag === "function") {
-    window.gtag("event", name, properties);
+    window.gtag("event", name, enrichedProperties);
   }
 }
 
@@ -213,10 +224,102 @@ export function identifyUser(userId: string, traits?: Record<string, any>) {
   }
 }
 
+function installClickTracking() {
+  if (clickTrackingInstalled || typeof document === "undefined") return;
+  clickTrackingInstalled = true;
+
+  document.addEventListener("click", event => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    const actionable = target.closest("button, a, [role='button']");
+    if (!(actionable instanceof HTMLElement)) return;
+
+    const eventName = inferClickEvent(actionable);
+    if (!eventName) return;
+
+    trackEvent(eventName, {
+      label: getElementLabel(actionable),
+      href: actionable instanceof HTMLAnchorElement ? actionable.href : undefined,
+    });
+  });
+}
+
+function getElementLabel(element: HTMLElement) {
+  return (
+    element.getAttribute("aria-label") ||
+    element.getAttribute("title") ||
+    element.textContent ||
+    ""
+  )
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+}
+
+function inferClickEvent(element: HTMLElement) {
+  const label = getElementLabel(element).toLowerCase();
+  const href = element instanceof HTMLAnchorElement ? element.getAttribute("href") || "" : "";
+
+  if (href.includes("/auth") || label.includes("sign in") || label.includes("log in")) {
+    return "login_started";
+  }
+
+  if (label.includes("get started") || label.includes("start free") || label.includes("sign up")) {
+    return "signup_started";
+  }
+
+  if (label.includes("new project") || label.includes("create project") || label.includes("first project")) {
+    return "project_create_clicked";
+  }
+
+  if (label.includes("create short link") || label.includes("shorten") || label.includes("add link")) {
+    return "link_create_clicked";
+  }
+
+  if (label === "copy" || label.includes("copy")) {
+    return "link_copy_clicked";
+  }
+
+  if (label.includes("qr")) {
+    return "qr_opened";
+  }
+
+  if (label.includes("analytics") || label.includes("compare")) {
+    return "analytics_opened";
+  }
+
+  if (label.includes("invite")) {
+    return "invite_flow_started";
+  }
+
+  if (label.includes("billing") || href.includes("/billing")) {
+    return "billing_opened";
+  }
+
+  return null;
+}
+
+function exposeDebugApi() {
+  if (typeof window === "undefined") return;
+  window.sluglyAnalytics = {
+    trackEvent,
+    trackPageView,
+    hasConsent,
+    getConsentStatus,
+  };
+}
+
 // Type augmentation for window
 declare global {
   interface Window {
     dataLayer?: any[];
     gtag?: (...args: any[]) => void;
+    sluglyAnalytics?: {
+      trackEvent: typeof trackEvent;
+      trackPageView: typeof trackPageView;
+      hasConsent: typeof hasConsent;
+      getConsentStatus: typeof getConsentStatus;
+    };
   }
 }
