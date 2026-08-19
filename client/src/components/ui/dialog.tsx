@@ -89,6 +89,21 @@ function DialogOverlay({
 
 DialogOverlay.displayName = "DialogOverlay";
 
+function hasDialogTitle(children: React.ReactNode): boolean {
+  return React.Children.toArray(children).some(child => {
+    if (!React.isValidElement(child)) return false;
+
+    if (child.type === DialogTitle || child.type === DialogPrimitive.Title) {
+      return true;
+    }
+
+    const props = child.props as { children?: React.ReactNode; [key: string]: unknown };
+    if (props?.["data-slot"] === "dialog-title") return true;
+
+    return props?.children ? hasDialogTitle(props.children) : false;
+  });
+}
+
 function DialogContent({
   className,
   children,
@@ -99,6 +114,7 @@ function DialogContent({
   showCloseButton?: boolean;
 }) {
   const { isComposing } = useDialogComposition();
+  const hasTitle = hasDialogTitle(children);
 
   const handleEscapeKeyDown = React.useCallback(
     (e: KeyboardEvent) => {
@@ -130,6 +146,11 @@ function DialogContent({
         onEscapeKeyDown={handleEscapeKeyDown}
         {...props}
       >
+        {!hasTitle && (
+          <DialogPrimitive.Title data-slot="dialog-title" className="sr-only">
+            Dialog
+          </DialogPrimitive.Title>
+        )}
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close
