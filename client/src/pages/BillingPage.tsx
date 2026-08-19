@@ -43,7 +43,7 @@ const PLAN_TIERS: PlanTier[] = [
       "3 projects",
       "Unlimited links",
       "1-year analytics",
-      "1 custom domain",
+      "Custom domains — coming soon",
       "UTM templates",
       "Basic campaign dashboard",
       "1 seat",
@@ -59,7 +59,7 @@ const PLAN_TIERS: PlanTier[] = [
       "Unlimited projects",
       "Unlimited links",
       "1-year analytics",
-      "3 custom domains",
+      "Custom domains — coming soon",
       "Full campaign dashboard",
       "CSV export",
       "Bulk operations",
@@ -77,7 +77,7 @@ const PLAN_TIERS: PlanTier[] = [
     icon: <Users className="h-4 w-4 text-purple-500" />,
     features: [
       "Everything in Pro",
-      "25 custom domains",
+      "Custom domains — coming soon",
       "2-year analytics",
       "White-label reports",
       "Extended roles (viewer/editor)",
@@ -135,6 +135,18 @@ export default function BillingPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Billing</h1>
           <p className="text-muted-foreground mt-1">Manage your workspace plan</p>
         </div>
+
+        <Card className="p-4 mb-6 border-yellow-200 dark:border-yellow-800 bg-yellow-50/50 dark:bg-yellow-900/10">
+          <div className="flex gap-3">
+            <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-medium text-yellow-800 dark:text-yellow-300">Custom domain routing is coming soon</p>
+              <p className="text-yellow-700 dark:text-yellow-400 mt-1">
+                Domains can be verified now, but paid plans do not rely on custom-domain traffic routing until the routing infrastructure is live.
+              </p>
+            </div>
+          </div>
+        </Card>
 
         {/* Downgrade Warning */}
         {isOverLimit && (
