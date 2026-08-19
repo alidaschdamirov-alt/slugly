@@ -2,11 +2,12 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { trackEvent } from "@/lib/analytics";
+import { DESTINATION_URL_ERROR, normalizeDestinationUrl } from "@shared/validation/destination-url";
 
 const TILES = [
   { ch: "Instagram", c: "#E1306C", slug: "summer-sale", n: 2481, sp: "0,22 12,18 24,24 36,12 48,16 60,8 72,14 88,4", live: true },
@@ -21,7 +22,7 @@ export default function Home() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
   const [url, setUrl] = useState("");
-  const [error, setError] = useState(false);
+  const [error, setError] = useState("");
   const [shortCode, setShortCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [isShortening, setIsShortening] = useState(false);
@@ -37,7 +38,11 @@ export default function Home() {
       trackEvent("anonymous_shorten", { shortCode: data.shortCode });
     },
     onError: (err) => {
-      toast.error(err.message);
+      if (err.message.includes("Enter a valid URL")) {
+        setError(DESTINATION_URL_ERROR);
+      } else {
+        toast.error(err.message);
+      }
       setIsShortening(false);
       // Reset captcha on error
       turnstileRef.current?.reset();
@@ -58,11 +63,13 @@ export default function Home() {
   }, []);
 
   const handleShorten = () => {
-    let v = url.trim();
-    if (!v) { setError(true); return; }
-    if (!/^https?:\/\//i.test(v)) v = "https://" + v;
-    try { new URL(v); } catch { setError(true); return; }
-    setError(false);
+    const normalized = normalizeDestinationUrl(url);
+    if (!normalized) {
+      setError(DESTINATION_URL_ERROR);
+      return;
+    }
+    setError("");
+    setUrl(normalized);
     setShortCode(null);
     setIsShortening(true);
     if (turnstileSiteKey && !captchaToken) {
@@ -70,7 +77,7 @@ export default function Home() {
       setIsShortening(false);
       return;
     }
-    shortenMutation.mutate({ url: v, captchaToken: captchaToken || undefined });
+    shortenMutation.mutate({ url: normalized, captchaToken: captchaToken || undefined });
   };
 
   const handleCopy = async () => {
@@ -130,7 +137,7 @@ export default function Home() {
         {/* Shorten widget */}
         <div className="max-w-[560px] mx-auto mt-[30px] px-2 sm:px-0">
           <div
-            className={`flex flex-col sm:flex-row gap-2 rounded-[14px] p-2 transition-all ${error ? "" : ""}`}
+            className="flex flex-col sm:flex-row gap-2 rounded-[14px] p-2 transition-all"
             style={{
               background: "#FFFFFF",
               border: `1px solid ${error ? "#FF5A3C" : "#E8E8F1"}`,
@@ -142,8 +149,10 @@ export default function Home() {
               inputMode="url"
               placeholder="Paste a long URL…"
               value={url}
-              onChange={(e) => { setUrl(e.target.value); setError(false); }}
+              onChange={(e) => { setUrl(e.target.value); setError(""); }}
+              onBlur={() => { const normalized = normalizeDestinationUrl(url); if (normalized) setUrl(normalized); }}
               onKeyDown={(e) => { if (e.key === "Enter") handleShorten(); }}
+              aria-invalid={!!error}
               className="flex-1 min-w-0 border-0 outline-0 bg-transparent text-[16px] px-3 py-2 sm:py-0"
               style={{ fontFamily: "inherit", color: "#14152B" }}
             />
@@ -169,7 +178,7 @@ export default function Home() {
           )}
           {error && (
             <p className="text-left text-[13.5px] font-semibold mt-[10px] pl-[6px]" style={{ color: "#FF5A3C" }}>
-              Enter a valid URL to shorten.
+              {error}
             </p>
           )}
           {shortCode && (
