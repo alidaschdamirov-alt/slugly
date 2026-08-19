@@ -7,7 +7,7 @@ import AppShell from "@/components/AppShell";
 import { getLoginUrl } from "@/const";
 import FeatureGateCard from "@/components/FeatureGateCard";
 import { useState, useMemo } from "react";
-import { BarChart3, MousePointerClick, Users2, Globe, Monitor, ArrowLeft, Tag } from "lucide-react";
+import { BarChart3, MousePointerClick, Users2, Globe, Monitor, ArrowLeft, Tag, RefreshCw } from "lucide-react";
 import { useLocation } from "wouter";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from "recharts";
 
@@ -26,7 +26,7 @@ export default function TagComparison() {
   const canCompareTags = !!campaignFeature && campaignFeature !== "none";
 
   // Fetch comparison data when 2+ tags selected
-  const { data: comparison, isLoading: comparing, error } = trpc.campaign.compareTags.useQuery(
+  const { data: comparison, isLoading: comparing, error, refetch } = trpc.campaign.compareTags.useQuery(
     { tags: selectedTags, days },
     { enabled: !!user && canCompareTags && selectedTags.length >= 2 }
   );
@@ -115,18 +115,7 @@ export default function TagComparison() {
           />
         ) : (
           <>
-            {/* Error display */}
-            {error && !isGated && (
-              <Card className="border-red-200 bg-red-50 dark:bg-red-950/20 dark:border-red-800">
-                <CardContent className="flex items-center gap-3 py-4">
-                  <BarChart3 className="h-5 w-5 text-red-600" />
-                  <div>
-                    <p className="font-medium text-red-800 dark:text-red-200">Error loading comparison</p>
-                    <p className="text-sm text-red-700 dark:text-red-300">{error.message}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            {error && !isGated && <FriendlyComparisonError onRetry={() => refetch()} />}
 
             {/* Tag selector */}
             <Card>
@@ -358,5 +347,25 @@ export default function TagComparison() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+function FriendlyComparisonError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <Card className="border-destructive/30 bg-destructive/5">
+      <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <BarChart3 className="mt-0.5 h-5 w-5 text-destructive" />
+          <div>
+            <p className="font-medium text-destructive">Couldn't load the comparison.</p>
+            <p className="text-sm text-muted-foreground">Try again in a moment.</p>
+          </div>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+          <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+          Retry
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
