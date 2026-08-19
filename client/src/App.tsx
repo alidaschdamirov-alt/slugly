@@ -113,6 +113,59 @@ function AnalyticsRouteTracker() {
   return null;
 }
 
+function LandingPricingLinkInjector() {
+  const [location] = useLocation();
+
+  useEffect(() => {
+    if (location !== "/" || typeof document === "undefined") return;
+
+    const createPricingLink = (variant: "nav" | "footer") => {
+      const link = document.createElement("a");
+      link.href = "/pricing";
+      link.textContent = "Pricing";
+      link.dataset.sluglyPricingLink = variant;
+      if (variant === "nav") {
+        link.className = "font-semibold text-[#6F6F8C] hover:text-[#14152B] transition-colors hidden sm:inline";
+      } else {
+        link.className = "hover:underline";
+      }
+      return link;
+    };
+
+    const nav = document.querySelector("nav");
+    if (nav && !nav.querySelector("[data-slugly-pricing-link='nav']")) {
+      const navGroups = Array.from(nav.querySelectorAll("div")).filter(group => {
+        const text = group.textContent || "";
+        return text.includes("Get started") || text.includes("Start free") || text.includes("Dashboard") || text.includes("Sign in");
+      });
+      const actions = navGroups[navGroups.length - 1];
+      const firstAction = actions?.firstElementChild;
+      if (actions && firstAction) {
+        actions.insertBefore(createPricingLink("nav"), firstAction.nextSibling);
+      }
+    }
+
+    const footer = document.querySelector("footer");
+    if (footer && !footer.querySelector("[data-slugly-pricing-link='footer']")) {
+      const linkGroups = Array.from(footer.querySelectorAll("div")).filter(group => {
+        const text = group.textContent || "";
+        return text.includes("Terms") && text.includes("Privacy") && text.includes("Acceptable Use");
+      });
+      const links = linkGroups[linkGroups.length - 1];
+      if (links) {
+        const pricing = createPricingLink("footer");
+        const spacer = document.createElement("span");
+        spacer.className = "mx-2";
+        spacer.textContent = "·";
+        links.insertBefore(spacer, links.firstChild);
+        links.insertBefore(pricing, links.firstChild);
+      }
+    }
+  }, [location]);
+
+  return null;
+}
+
 initAnalytics();
 
 function App() {
@@ -122,6 +175,7 @@ function App() {
         <TooltipProvider>
           <Toaster />
           <AnalyticsRouteTracker />
+          <LandingPricingLinkInjector />
           <AppRoutes />
           <CookieConsent />
         </TooltipProvider>
