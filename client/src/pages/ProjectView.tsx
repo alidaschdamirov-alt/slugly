@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -40,7 +39,6 @@ import {
   Search,
   Copy,
   Check,
-  MousePointerClick,
   ExternalLink,
   BarChart3,
   Loader2,
@@ -60,6 +58,7 @@ import { toast } from "sonner";
 import LinkGridCard from "@/components/LinkGridCard";
 import TagInput from "@/components/TagInput";
 import { QrCodeDialog } from "@/components/QrCodeDialog";
+import { getEffectiveLinkStatus, getEffectiveStatusClass, getEffectiveStatusLabel } from "@/lib/linkStatus";
 
 type SortField = "clicks" | "createdAt" | "shortCode";
 type SortDir = "asc" | "desc";
@@ -81,7 +80,6 @@ export default function ProjectView() {
   const [editColor, setEditColor] = useState("#5A3FF0");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteMode, setDeleteMode] = useState<"cascade" | "move">("cascade");
-  // Link edit state
   const [editLinkOpen, setEditLinkOpen] = useState(false);
   const [editLinkId, setEditLinkId] = useState<number | null>(null);
   const [editLinkDest, setEditLinkDest] = useState("");
@@ -94,10 +92,8 @@ export default function ProjectView() {
   const [editLinkUtmContent, setEditLinkUtmContent] = useState("");
   const [editLinkActiveFrom, setEditLinkActiveFrom] = useState("");
   const [editLinkExpiresAt, setEditLinkExpiresAt] = useState("");
-  // Delete link state
   const [deleteLinkOpen, setDeleteLinkOpen] = useState(false);
   const [deleteLinkId, setDeleteLinkId] = useState<number | null>(null);
-  // QR state
   const [qrOpen, setQrOpen] = useState(false);
   const [qrCode, setQrCode] = useState("");
   const [qrUrl, setQrUrl] = useState("");
@@ -229,7 +225,6 @@ export default function ProjectView() {
   ) => {
     e.stopPropagation();
     setQrCode(shortCode);
-    // Use custom domain if link has one and user has verified domains
     const userDomains = domainsData || [];
     const linkDomain = domainId
       ? userDomains.find((d: any) => d.id === domainId && d.verified)
@@ -242,7 +237,6 @@ export default function ProjectView() {
     setQrOpen(true);
   };
 
-  // Get all unique tags from links for filter
   const allTags = useMemo(() => {
     if (!links) return [];
     const tagSet = new Set<string>();
@@ -259,7 +253,7 @@ export default function ProjectView() {
     let result = [...links];
 
     if (statusFilter !== "all") {
-      result = result.filter(l => l.status === statusFilter);
+      result = result.filter(l => getEffectiveLinkStatus(l) === statusFilter);
     }
 
     if (tagFilter !== "all") {
@@ -391,7 +385,6 @@ export default function ProjectView() {
         )}
       </div>
 
-      {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -403,7 +396,7 @@ export default function ProjectView() {
           />
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[130px]">
+          <SelectTrigger className="w-[150px]">
             <Filter className="h-3.5 w-3.5 mr-1.5" />
             <SelectValue />
           </SelectTrigger>
@@ -411,6 +404,8 @@ export default function ProjectView() {
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="active">Active</SelectItem>
             <SelectItem value="paused">Paused</SelectItem>
+            <SelectItem value="scheduled">Scheduled</SelectItem>
+            <SelectItem value="expired">Expired</SelectItem>
           </SelectContent>
         </Select>
         {allTags.length > 0 && (
@@ -465,7 +460,6 @@ export default function ProjectView() {
         </div>
       </div>
 
-      {/* Content */}
       {isLoading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -551,7 +545,6 @@ export default function ProjectView() {
         />
       )}
 
-      {/* Edit Project Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
           <DialogHeader>
@@ -612,7 +605,6 @@ export default function ProjectView() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Project Dialog */}
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -676,7 +668,6 @@ export default function ProjectView() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Edit Link Dialog */}
       <Dialog open={editLinkOpen} onOpenChange={setEditLinkOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -790,7 +781,6 @@ export default function ProjectView() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Link Dialog */}
       <AlertDialog open={deleteLinkOpen} onOpenChange={setDeleteLinkOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -814,7 +804,6 @@ export default function ProjectView() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* QR Code Dialog */}
       <QrCodeDialog
         open={qrOpen}
         onOpenChange={setQrOpen}
@@ -909,134 +898,129 @@ function LinksTable({
           </tr>
         </thead>
         <tbody className="divide-y">
-          {links.map(link => (
-            <tr
-              key={link.id}
-              className="hover:bg-muted/30 transition-colors cursor-pointer"
-              onClick={() => onClickLink(link.id)}
-            >
-              <td className="px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
-                    /r/{link.shortCode}
-                  </code>
-                  <button
-                    onClick={e => copyLink(link.shortCode, link.id, e)}
-                    className="text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {copiedId === link.id ? (
-                      <Check className="h-3.5 w-3.5 text-green-500" />
-                    ) : (
-                      <Copy className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </div>
-                {link.title && (
-                  <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-[200px]">
-                    {link.title}
-                  </p>
-                )}
-              </td>
-              <td className="px-4 py-3 hidden md:table-cell">
-                <span className="text-xs text-muted-foreground truncate max-w-[250px] block">
-                  {link.destinationUrl}
-                </span>
-              </td>
-              <td className="px-4 py-3 hidden lg:table-cell">
-                <div className="flex flex-wrap gap-1">
-                  {link.tags &&
-                    Array.isArray(link.tags) &&
-                    link.tags.slice(0, 2).map((tag: string) => (
+          {links.map(link => {
+            const effectiveStatus = getEffectiveLinkStatus(link);
+            return (
+              <tr
+                key={link.id}
+                className="hover:bg-muted/30 transition-colors cursor-pointer"
+                onClick={() => onClickLink(link.id)}
+              >
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
+                      /r/{link.shortCode}
+                    </code>
+                    <button
+                      onClick={e => copyLink(link.shortCode, link.id, e)}
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {copiedId === link.id ? (
+                        <Check className="h-3.5 w-3.5 text-green-500" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
+                  {link.title && (
+                    <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-[200px]">
+                      {link.title}
+                    </p>
+                  )}
+                </td>
+                <td className="px-4 py-3 hidden md:table-cell">
+                  <span className="text-xs text-muted-foreground truncate max-w-[250px] block">
+                    {link.destinationUrl}
+                  </span>
+                </td>
+                <td className="px-4 py-3 hidden lg:table-cell">
+                  <div className="flex flex-wrap gap-1">
+                    {link.tags &&
+                      Array.isArray(link.tags) &&
+                      link.tags.slice(0, 2).map((tag: string) => (
+                        <Badge
+                          key={tag}
+                          variant="secondary"
+                          className="text-[10px] px-1.5 py-0"
+                        >
+                          {tag}
+                        </Badge>
+                      ))}
+                    {link.tags && link.tags.length > 2 && (
                       <Badge
-                        key={tag}
                         variant="secondary"
                         className="text-[10px] px-1.5 py-0"
                       >
-                        {tag}
+                        +{link.tags.length - 2}
                       </Badge>
-                    ))}
-                  {link.tags && link.tags.length > 2 && (
-                    <Badge
-                      variant="secondary"
-                      className="text-[10px] px-1.5 py-0"
-                    >
-                      +{link.tags.length - 2}
-                    </Badge>
-                  )}
-                </div>
-              </td>
-              <td className="px-4 py-3 text-right">
-                <span className="font-medium">
-                  {link.clickCount.toLocaleString()}
-                </span>
-              </td>
-              <td className="px-4 py-3 text-center">
-                <button
-                  onClick={e => onToggleStatus(link, e)}
-                  className="inline-block"
-                >
-                  {link.status === "active" ? (
-                    <Badge
-                      variant="secondary"
-                      className="text-xs bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400 cursor-pointer"
-                    >
-                      Active
-                    </Badge>
-                  ) : (
-                    <Badge
-                      variant="secondary"
-                      className="text-xs bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 cursor-pointer"
-                    >
-                      Paused
-                    </Badge>
-                  )}
-                </button>
-              </td>
-              <td className="px-4 py-3 text-right hidden sm:table-cell">
-                <div>
-                  <span className="text-xs text-muted-foreground">
-                    {formatDate(link.createdAt)}
-                  </span>
-                  {link.updatedAt &&
-                    new Date(link.updatedAt).getTime() -
-                      new Date(link.createdAt).getTime() >
-                      60000 && (
-                      <p className="text-[10px] text-muted-foreground/70">
-                        edited {formatDate(link.updatedAt)}
-                      </p>
                     )}
-                </div>
-              </td>
-              <td className="px-4 py-3">
-                <div className="flex items-center gap-1 justify-end">
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <span className="font-medium">
+                    {link.clickCount.toLocaleString()}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-center">
                   <button
-                    onClick={e => {
-                      e.stopPropagation();
-                      onQr(link.shortCode, e);
-                    }}
-                    className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                    onClick={e => onToggleStatus(link, e)}
+                    className="inline-block"
+                    title="Toggle paused/active"
                   >
-                    <QrCode className="h-3.5 w-3.5" />
+                    <Badge
+                      variant="secondary"
+                      className={`text-xs cursor-pointer border-0 ${getEffectiveStatusClass(effectiveStatus)}`}
+                    >
+                      {getEffectiveStatusLabel(effectiveStatus)}
+                    </Badge>
                   </button>
-                  <button
-                    onClick={e => {
-                      e.stopPropagation();
-                      onEditLink(link);
-                    }}
-                    className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    onClick={e => onDeleteLink(link.id, e)}
-                    className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
+                </td>
+                <td className="px-4 py-3 text-right hidden sm:table-cell">
+                  <div>
+                    <span className="text-xs text-muted-foreground">
+                      {formatDate(link.createdAt)}
+                    </span>
+                    {link.updatedAt &&
+                      new Date(link.updatedAt).getTime() -
+                        new Date(link.createdAt).getTime() >
+                        60000 && (
+                        <p className="text-[10px] text-muted-foreground/70">
+                          edited {formatDate(link.updatedAt)}
+                        </p>
+                      )}
+                  </div>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-1 justify-end">
+                    <button
+                      onClick={e => {
+                        e.stopPropagation();
+                        onQr(link.shortCode, e);
+                      }}
+                      className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                    >
+                      <QrCode className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={e => {
+                        e.stopPropagation();
+                        onEditLink(link);
+                      }}
+                      className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={e => onDeleteLink(link.id, e)}
+                      className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
