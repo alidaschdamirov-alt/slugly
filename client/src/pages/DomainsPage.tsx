@@ -5,6 +5,16 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
@@ -47,6 +57,7 @@ export default function DomainsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [hostname, setHostname] = useState("");
   const [hostnameError, setHostnameError] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
 
   const { data: domains, isLoading } = trpc.domain.list.useQuery(undefined, { enabled: !!user });
   const utils = trpc.useUtils();
@@ -73,8 +84,10 @@ export default function DomainsPage() {
   const deleteDomain = trpc.domain.delete.useMutation({
     onSuccess: () => {
       utils.domain.list.invalidate();
+      setDeleteTarget(null);
       toast.success("Domain removed");
     },
+    onError: (err) => toast.error(err.message),
   });
 
   if (authLoading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin" /></div>;
@@ -143,7 +156,6 @@ export default function DomainsPage() {
           </Dialog>
         </div>
 
-        {/* Honesty label */}
         <Card className="p-4 mb-6 border-yellow-200 dark:border-yellow-800 bg-yellow-50/50 dark:bg-yellow-900/10">
           <div className="flex gap-3">
             <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 shrink-0 mt-0.5" />
@@ -164,17 +176,17 @@ export default function DomainsPage() {
           <div className="space-y-3">
             {domains.map((domain: any) => (
               <Card key={domain.id} className="p-5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Globe className="h-5 w-5 text-muted-foreground" />
-                    <div>
-                      <p className="font-medium">{domain.hostname}</p>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Globe className="h-5 w-5 text-muted-foreground shrink-0" />
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{domain.hostname}</p>
                       <p className="text-xs text-muted-foreground">
                         Added {new Date(domain.createdAt).toLocaleDateString()}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 shrink-0">
                     {domain.verified ? (
                       <Badge className="bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0">
                         <CheckCircle2 className="h-3 w-3 mr-1" />
@@ -195,18 +207,14 @@ export default function DomainsPage() {
                       size="icon"
                       variant="ghost"
                       className="h-8 w-8 text-destructive"
-                      onClick={() => {
-                        if (window.confirm(`Remove ${domain.hostname}? DNS records at your registrar will not be changed automatically.`)) {
-                          deleteDomain.mutate({ id: domain.id });
-                        }
-                      }}
+                      onClick={() => setDeleteTarget(domain)}
+                      aria-label={`Remove ${domain.hostname}`}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
 
-                {/* Show verification instructions for unverified domains */}
                 {!domain.verified && domain.verificationToken && (
                   <div className="mt-4 p-4 bg-muted/50 rounded-lg border border-dashed space-y-3">
                     <p className="text-sm font-medium">DNS Verification Required</p>
@@ -260,7 +268,6 @@ export default function DomainsPage() {
           </Card>
         )}
 
-        {/* Instructions */}
         <Card className="p-6 mt-6">
           <h3 className="font-medium mb-3">How to set up your custom domain</h3>
           <ol className="space-y-2 text-sm text-muted-foreground list-decimal list-inside">
@@ -273,6 +280,27 @@ export default function DomainsPage() {
           </ol>
         </Card>
       </div>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove domain?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove {deleteTarget?.hostname || "this domain"} and its DNS verification. You'll need to set up the DNS records again to re-add it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteTarget && deleteDomain.mutate({ id: deleteTarget.id })}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteDomain.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Remove Domain
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }
