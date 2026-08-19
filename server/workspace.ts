@@ -358,3 +358,239 @@ export async function deleteUtmTemplate(id: number, workspaceId: number): Promis
   if (!db) return;
   await db.delete(utmTemplates).where(and(eq(utmTemplates.id, id), eq(utmTemplates.workspaceId, workspaceId)));
 }
+
+// ============ CAMPAIGN ANALYTICS + REPORT DATA ============
+
+export interface WorkspaceBranding {
+  logoUrl?: string | null;
+  brandColor?: string | null;
+  companyName?: string | null;
+  contactEmail?: string | null;
+  website?: string | null;
+}
+
+export interface ReportData {
+  title: string;
+  generatedAt: number;
+  period: { from: string; to: string; days: number };
+  summary: {
+    totalClicks: number;
+    uniqueClicks: number;
+    linkCount: number;
+    topLink: { shortCode: string } | null;
+  };
+  timeSeries: Array<{ day: string; clicks: number }>;
+  channels: Array<{ source: string; medium: string; clicks: number; share: number }>;
+  topLinks: Array<{ shortCode: string; destinationUrl: string; clicks: number; uniqueClicks: number }>;
+  topCountries: Array<{ country: string; clicks: number }>;
+  topDevices: Array<{ device: string; clicks: number }>;
+  topReferrers: Array<{ referrer: string; clicks: number }>;
+}
+
+type LinkRow = typeof links.$inferSelect;
+
+function periodStart(days: number) {
+  return Date.now() - days * 24 * 60 * 60 * 1000;
+}
+
+function fmtDay(timestamp: number) {
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function scopeSql(projectIds: number[], memberIds: number[]) {
+  return sql`(${projectIds.length ? sql`${links.projectId} IN (${sql.raw(projectIds.join(","))})` : sql`1 = 0`} OR ${memberIds.length ? sql`${links.userId} IN (${sql.raw(memberIds.join(","))})` : sql`1 = 0`})`;
+}
+
+async function getWorkspaceScope(workspaceId: number) {
+  const db = await getDb();
+  if (!db) return { projectIds: [] as number[], memberIds: [] as number[] };
+  const [workspaceProjects, members] = await Promise.all([
+    db.select({ id: projects.id }).from(projects).where(eq(projects.workspaceId, workspaceId)),
+    db.select({ userId: workspaceMembers.userId }).from(workspaceMembers).where(eq(workspaceMembers.workspaceId, workspaceId)),
+  ]);
+  return {
+    projectIds: workspaceProjects.map(p => p.id),
+    memberIds: members.map(m => m.userId),
+  };
+}
+
+async function getScopedLinks(workspaceId: number, options: { projectId?: number; tag?: string } = {}): Promise<LinkRow[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const scope = await getWorkspaceScope(workspaceId);
+  const conditions = [scopeSql(scope.projectIds, scope.memberIds)];
+  if (options.projectId) conditions.push(eq(links.projectId, options.projectId));
+  if (options.tag) conditions.push(sql`JSON_CONTAINS(${links.tags}, JSON_QUOTE(${options.tag}))`);
+  return db.select().from(links).where(and(...conditions)).orderBy(desc(links.createdAt));
+}
+
+async function getClickSummary(linkIds: number[], days: number) {
+  const db = await getDb();
+  if (!db || linkIds.length === 0) {
+    return { totalClicks: 0, uniqueClicks: 0, clicksOverTime: [], topCountries: [], topDevices: [] };
+  }
+  const since = periodStart(days);
+  const notBot = eq(clicks.isBot, false);
+  const [total, unique, time, countries, devices] = await Promise.all([
+    db.select({ count: sql<number>`COUNT(*)` }).from(clicks).where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, notBot)),
+    db.select({ count: sql<number>`COUNT(DISTINCT ${clicks.ipHash})` }).from(clicks).where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, notBot)),
+    db.select({ day: sql<string>`DATE(FROM_UNIXTIME(${clicks.timestamp} / 1000))`, count: sql<number>`COUNT(*)` })
+      .from(clicks)
+      .where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, notBot))
+      .groupBy(sql`DATE(FROM_UNIXTIME(${clicks.timestamp} / 1000))`)
+      .orderBy(sql`DATE(FROM_UNIXTIME(${clicks.timestamp} / 1000))`),
+    db.select({ value: clicks.country, count: sql<number>`COUNT(*)` })
+      .from(clicks)
+      .where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, notBot, sql`${clicks.country} IS NOT NULL`))
+      .groupBy(clicks.country)
+      .orderBy(desc(sql`COUNT(*)`))
+      .limit(10),
+    db.select({ value: clicks.deviceType, count: sql<number>`COUNT(*)` })
+      .from(clicks)
+      .where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, notBot, sql`${clicks.deviceType} IS NOT NULL`))
+      .groupBy(clicks.deviceType)
+      .orderBy(desc(sql`COUNT(*)`))
+      .limit(10),
+  ]);
+  return {
+    totalClicks: total[0]?.count ?? 0,
+    uniqueClicks: unique[0]?.count ?? 0,
+    clicksOverTime: time,
+    topCountries: countries,
+    topDevices: devices,
+  };
+}
+
+export async function getCampaignChannelStats(workspaceId: number, input: { days?: number; projectId?: number; tag?: string } = {}) {
+  const days = input.days ?? 30;
+  const scopedLinks = await getScopedLinks(workspaceId, { projectId: input.projectId, tag: input.tag });
+  const linkIds = scopedLinks.map(l => l.id);
+  const db = await getDb();
+  if (!db || linkIds.length === 0) return { totalClicks: 0, channels: [] };
+  const since = periodStart(days);
+  const clickCounts = await db.select({ linkId: clicks.linkId, count: sql<number>`COUNT(*)` })
+    .from(clicks)
+    .where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, eq(clicks.isBot, false)))
+    .groupBy(clicks.linkId);
+  const clickCountByLinkId = new Map(clickCounts.map(row => [row.linkId, row.count]));
+  const channelMap = new Map<string, { utmSource: string | null; utmMedium: string | null; clicks: number; uniqueLinks: number }>();
+  let totalClicks = 0;
+  for (const link of scopedLinks) {
+    const count = clickCountByLinkId.get(link.id) ?? 0;
+    if (count === 0) continue;
+    totalClicks += count;
+    const key = `${link.utmSource || ""}::${link.utmMedium || ""}`;
+    const current = channelMap.get(key) || { utmSource: link.utmSource, utmMedium: link.utmMedium, clicks: 0, uniqueLinks: 0 };
+    current.clicks += count;
+    current.uniqueLinks += 1;
+    channelMap.set(key, current);
+  }
+  return { totalClicks, channels: Array.from(channelMap.values()).sort((a, b) => b.clicks - a.clicks) };
+}
+
+export async function getProjectComparison(workspaceId: number, projectIds: number[], days: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const scopedProjects = await db.select().from(projects).where(and(eq(projects.workspaceId, workspaceId), inArray(projects.id, projectIds)));
+  return Promise.all(scopedProjects.map(async project => {
+    const projectLinks = await db.select({ id: links.id }).from(links).where(eq(links.projectId, project.id));
+    const summary = await getClickSummary(projectLinks.map(l => l.id), days);
+    return {
+      projectId: project.id,
+      projectName: project.name,
+      totalClicks: summary.totalClicks,
+      uniqueClicks: summary.uniqueClicks,
+      clicksOverTime: summary.clicksOverTime,
+      topCountries: summary.topCountries,
+      topDevices: summary.topDevices,
+    };
+  }));
+}
+
+export async function getTagComparison(workspaceId: number, tags: string[], days: number) {
+  return Promise.all(tags.map(async tag => {
+    const taggedLinks = await getScopedLinks(workspaceId, { tag });
+    const summary = await getClickSummary(taggedLinks.map(l => l.id), days);
+    return {
+      tag,
+      totalClicks: summary.totalClicks,
+      uniqueClicks: summary.uniqueClicks,
+      clicksOverTime: summary.clicksOverTime,
+      topCountries: summary.topCountries,
+      topDevices: summary.topDevices,
+    };
+  }));
+}
+
+export async function getWorkspaceBranding(workspaceId: number): Promise<WorkspaceBranding> {
+  const raw = await getSiteSetting(`workspace_branding_${workspaceId}`);
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as WorkspaceBranding;
+  } catch {
+    return {};
+  }
+}
+
+export async function setWorkspaceBranding(workspaceId: number, input: WorkspaceBranding): Promise<void> {
+  const current = await getWorkspaceBranding(workspaceId);
+  await setSiteSetting(`workspace_branding_${workspaceId}`, JSON.stringify({ ...current, ...input }));
+}
+
+export async function generateReportData(workspaceId: number, input: { projectId?: number; tag?: string; days?: number }): Promise<ReportData> {
+  const db = await getDb();
+  const days = input.days ?? 30;
+  const since = periodStart(days);
+  const scopedLinks = await getScopedLinks(workspaceId, { projectId: input.projectId, tag: input.tag });
+  const linkIds = scopedLinks.map(l => l.id);
+  const summary = await getClickSummary(linkIds, days);
+  const clickCounts = db && linkIds.length > 0
+    ? await db.select({ linkId: clicks.linkId, count: sql<number>`COUNT(*)`, unique: sql<number>`COUNT(DISTINCT ${clicks.ipHash})` })
+        .from(clicks)
+        .where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, eq(clicks.isBot, false)))
+        .groupBy(clicks.linkId)
+    : [];
+  const countByLink = new Map(clickCounts.map(row => [row.linkId, row]));
+  const topLinks = scopedLinks
+    .map(link => ({
+      shortCode: link.shortCode,
+      destinationUrl: link.destinationUrl,
+      clicks: countByLink.get(link.id)?.count ?? 0,
+      uniqueClicks: countByLink.get(link.id)?.unique ?? 0,
+    }))
+    .sort((a, b) => b.clicks - a.clicks)
+    .slice(0, 10);
+  const channels = (await getCampaignChannelStats(workspaceId, { days, projectId: input.projectId, tag: input.tag })).channels.map(channel => ({
+    source: channel.utmSource || "none",
+    medium: channel.utmMedium || "none",
+    clicks: channel.clicks,
+    share: summary.totalClicks > 0 ? Math.round((channel.clicks / summary.totalClicks) * 1000) / 10 : 0,
+  }));
+  const topReferrers = db && linkIds.length > 0
+    ? await db.select({ referrer: clicks.referrer, clicks: sql<number>`COUNT(*)` })
+        .from(clicks)
+        .where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, eq(clicks.isBot, false), sql`${clicks.referrer} IS NOT NULL AND ${clicks.referrer} != ''`))
+        .groupBy(clicks.referrer)
+        .orderBy(desc(sql`COUNT(*)`))
+        .limit(10)
+    : [];
+  const from = fmtDay(since);
+  const to = fmtDay(Date.now());
+  return {
+    title: input.projectId ? "Project Performance Report" : input.tag ? `Tag Performance Report: ${input.tag}` : "Workspace Performance Report",
+    generatedAt: Date.now(),
+    period: { from, to, days },
+    summary: {
+      totalClicks: summary.totalClicks,
+      uniqueClicks: summary.uniqueClicks,
+      linkCount: scopedLinks.length,
+      topLink: topLinks[0] ? { shortCode: topLinks[0].shortCode } : null,
+    },
+    timeSeries: summary.clicksOverTime.map(row => ({ day: row.day, clicks: row.count })),
+    channels,
+    topLinks,
+    topCountries: summary.topCountries.map(row => ({ country: row.value || "Unknown", clicks: row.count })),
+    topDevices: summary.topDevices.map(row => ({ device: row.value || "Unknown", clicks: row.count })),
+    topReferrers: topReferrers.map(row => ({ referrer: row.referrer || "Direct", clicks: row.clicks })),
+  };
+}
