@@ -6,7 +6,7 @@ import { useEffect } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import CookieConsent from "./components/CookieConsent";
-import { initAnalytics, trackPageView } from "@/lib/analytics";
+import { initAnalytics, trackEvent, trackPageView } from "@/lib/analytics";
 import Home from "./pages/Home";
 import Dashboard from "./pages/Dashboard";
 import ProjectView from "./pages/ProjectView";
@@ -71,11 +71,37 @@ function AppRoutes() {
   );
 }
 
+function getRouteEvent(location: string) {
+  if (location === "/") return "home_opened";
+  if (location.startsWith("/auth")) return "auth_opened";
+  if (location.startsWith("/dashboard")) return "dashboard_opened";
+  if (location.startsWith("/create/bulk")) return "bulk_create_opened";
+  if (location.startsWith("/create")) return "create_link_opened";
+  if (/^\/project\/[^/]+\/analytics/.test(location)) return "project_analytics_opened";
+  if (/^\/project\/[^/]+/.test(location)) return "project_opened";
+  if (/^\/link\/[^/]+\/analytics/.test(location)) return "link_analytics_opened";
+  if (location.startsWith("/team")) return "team_opened";
+  if (location.startsWith("/billing")) return "billing_opened";
+  if (location.startsWith("/domains")) return "domains_opened";
+  if (location.startsWith("/qr")) return "qr_page_opened";
+  if (location.startsWith("/tags")) return "tags_opened";
+  if (location.startsWith("/campaigns")) return "campaigns_opened";
+  if (location.startsWith("/compare")) return "comparison_opened";
+  if (location.startsWith("/invite")) return "invite_accept_opened";
+  if (location.startsWith("/admin")) return "admin_opened";
+  return null;
+}
+
 function AnalyticsRouteTracker() {
   const [location] = useLocation();
 
   useEffect(() => {
     trackPageView(location);
+
+    const eventName = getRouteEvent(location);
+    if (eventName) {
+      trackEvent(eventName, { route: location });
+    }
   }, [location]);
 
   return null;
