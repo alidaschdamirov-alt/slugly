@@ -23,6 +23,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import TagInput from "@/components/TagInput";
 import { QrCodeDialog } from "@/components/QrCodeDialog";
 import CsvExportButton from "@/components/CsvExportButton";
+import { getDestinationUrlError, normalizeDestinationUrl } from "../../../shared/validation/destination-url";
 
 export default function LinkAnalytics() {
   const { user, loading: authLoading } = useAuth();
@@ -33,6 +34,7 @@ export default function LinkAnalytics() {
   const [days, setDays] = useState(30);
   const [editOpen, setEditOpen] = useState(false);
   const [editDest, setEditDest] = useState("");
+  const [editDestError, setEditDestError] = useState("");
   const [editTitle, setEditTitle] = useState("");
   const [editProjectId, setEditProjectId] = useState<string>("none");
   const [editTags, setEditTags] = useState<string[]>([]);
@@ -120,6 +122,7 @@ export default function LinkAnalytics() {
   const openEditDialog = () => {
     if (data?.link) {
       setEditDest(data.link.destinationUrl);
+      setEditDestError("");
       setEditTitle(data.link.title || "");
       setEditProjectId(data.link.projectId ? String(data.link.projectId) : "none");
       setEditTags(data.link.tags || []);
@@ -134,9 +137,18 @@ export default function LinkAnalytics() {
 
   const handleEditSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    const urlError = getDestinationUrlError(editDest);
+    if (urlError) {
+      setEditDestError(urlError);
+      return;
+    }
+    const normalizedUrl = normalizeDestinationUrl(editDest)!;
+    if (normalizedUrl !== editDest) setEditDest(normalizedUrl);
+
     updateLink.mutate({
       id: linkId,
-      destinationUrl: editDest,
+      destinationUrl: normalizedUrl,
       title: editTitle || undefined,
       projectId: editProjectId === "none" ? null : parseInt(editProjectId, 10),
       tags: editTags.length > 0 ? editTags : undefined,
@@ -363,11 +375,25 @@ export default function LinkAnalytics() {
             <DialogTitle>Edit Link</DialogTitle>
             <DialogDescription>Update the link details. The short code cannot be changed.</DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleEditSubmit} className="space-y-4 mt-2">
+          <form onSubmit={handleEditSubmit} className="space-y-4 mt-2" noValidate>
             <div className="space-y-2">
               <Label>Destination URL</Label>
-              <Input value={editDest} onChange={e => setEditDest(e.target.value)} type="url" required />
-              <p className="text-xs text-muted-foreground">Changing the URL preserves all click history</p>
+              <Input
+                value={editDest}
+                onChange={e => { setEditDest(e.target.value); setEditDestError(""); }}
+                onBlur={() => {
+                  const normalized = normalizeDestinationUrl(editDest);
+                  if (normalized) setEditDest(normalized);
+                }}
+                type="url"
+                aria-invalid={!!editDestError}
+                required
+              />
+              {editDestError ? (
+                <p className="text-xs text-destructive">{editDestError}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">Changing the URL preserves all click history</p>
+              )}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-2"><Label>Title</Label><Input value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Optional title" /></div>
