@@ -60,6 +60,35 @@ async function startServer() {
     res.json({ status: "ok", uptime: process.uptime(), timestamp: Date.now() });
   });
 
+  // Link analytics supplement: bot-filtered total and unique clicks for a single link.
+  app.get("/api/link/:id/unique-clicks", async (req, res) => {
+    try {
+      const linkId = Number(req.params.id);
+      if (!Number.isFinite(linkId) || linkId <= 0) {
+        return res.status(400).json({ error: "Invalid link id" });
+      }
+
+      const { sdk } = await import("./sdk");
+      const user = await sdk.authenticateRequest(req);
+      const { getLinkById, getClickCountByLinkIdFiltered } = await import(
+        "../db"
+      );
+      const link = await getLinkById(linkId);
+      if (!link || link.userId !== user.id) {
+        return res.status(404).json({ error: "Link not found" });
+      }
+
+      const counts = await getClickCountByLinkIdFiltered(linkId, true);
+      return res.json({
+        clickCount: counts.total,
+        uniqueClicks: counts.unique,
+      });
+    } catch (err: any) {
+      const status = err?.code === "FORBIDDEN" ? 401 : 500;
+      return res.status(status).json({ error: err?.message || "Failed" });
+    }
+  });
+
   // Scheduled task handlers (must be before Vite/static fallthrough)
   app.post("/api/scheduled/backup", backupHandler);
   app.post("/api/scheduled/notify-expiring-links", async (req, res) => {
