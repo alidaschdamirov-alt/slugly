@@ -50,26 +50,29 @@ export function TermsPage() {
 export function PrivacyPage() {
   return (
     <LegalLayout title="Privacy Policy">
-      <p><strong>Last updated:</strong> June 2026</p>
+      <p><strong>Last updated:</strong> August 2026</p>
       <h2>1. Information We Collect</h2>
       <p>We collect information you provide directly (account details, links you create) and information collected automatically (click analytics, IP addresses, user agents, referrers).</p>
       <h2>2. How We Use Information</h2>
       <p>We use collected information to provide and improve the Service, generate analytics for link owners, detect abuse, and comply with legal obligations.</p>
       <h2>3. Data Retention</h2>
-      <p>We retain your data for as long as your account is active. Click analytics data is retained according to your plan tier (Free: 30 days, Pro: unlimited). You may request deletion at any time.</p>
+      <p>We retain your data for as long as your account is active. Click analytics data is retained according to your plan tier. You may request deletion at any time.</p>
       <h2>4. IP Address Handling</h2>
       <p>IP addresses are hashed before storage for analytics purposes. We do not store raw IP addresses in click logs. The hash is used only for unique visitor counting and cannot be reversed to identify individuals.</p>
       <h2>5. Cookies</h2>
       <p>We use essential cookies for authentication and session management. Analytics cookies are used only with your consent. You can manage cookie preferences at any time.</p>
-      <h2>6. Third-Party Services</h2>
-      <p>We may use third-party services for hosting, analytics, and payment processing. These services have their own privacy policies.</p>
-      <h2>7. Your Rights (GDPR)</h2>
+      <h2>6. Product Analytics</h2>
+      <p>With your consent, we use third-party product analytics services, including Amplitude and Google Analytics, to understand how users navigate Slugly, which features are used, and where the product can be improved. These tools may receive event names, page paths, device/browser information, approximate location, and pseudonymous identifiers such as prefixed user and workspace IDs. We do not send destination URLs as analytics identifiers.</p>
+      <p>Product analytics is initialized only after you grant analytics consent. If you decline analytics cookies, these optional analytics tools are not activated for your browser session.</p>
+      <h2>7. Third-Party Services</h2>
+      <p>We may use third-party services for hosting, authentication, email delivery, analytics, abuse prevention, and payment processing. These services have their own privacy policies.</p>
+      <h2>8. Your Rights (GDPR)</h2>
       <p>You have the right to access, export, correct, and delete your personal data. Use the "Privacy & Data" section in your account settings to exercise these rights.</p>
-      <h2>8. Data Security</h2>
+      <h2>9. Data Security</h2>
       <p>We implement appropriate technical and organizational measures to protect your data. However, no method of transmission over the Internet is 100% secure.</p>
-      <h2>9. Changes to This Policy</h2>
+      <h2>10. Changes to This Policy</h2>
       <p>We will notify you of material changes to this policy via the Service or email.</p>
-      <h2>10. Contact</h2>
+      <h2>11. Contact</h2>
       <p>For privacy-related inquiries, please contact us through the Service.</p>
     </LegalLayout>
   );
