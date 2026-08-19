@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
 import FeatureGateCard from "@/components/FeatureGateCard";
-import { Download, FileText, Loader2, Lock, ExternalLink } from "lucide-react";
+import { Download, FileText, Loader2, Lock, ExternalLink, AlertTriangle, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -20,20 +20,24 @@ export default function ExportReport() {
   const [projectId, setProjectId] = useState<number | null>(null);
   const [days, setDays] = useState(30);
   const [generating, setGenerating] = useState(false);
+  const [reportError, setReportError] = useState(false);
   const [result, setResult] = useState<{ htmlUrl: string; pdfUrl: string | null } | null>(null);
 
   const generateReport = trpc.report.generate.useMutation({
     onSuccess: (data) => {
       setResult({ htmlUrl: data.htmlUrl, pdfUrl: data.pdfUrl });
       setGenerating(false);
+      setReportError(false);
       toast.success("Report generated successfully!");
     },
     onError: (err) => {
       setGenerating(false);
+      setReportError(true);
       if (err.message.includes("require Team")) {
         toast.error("White-label reports require Team plan. Upgrade to access this feature.");
       } else {
-        toast.error(err.message);
+        console.error("[Report generation failed]", err);
+        toast.error("Couldn't generate the report. Try again in a moment.");
       }
     },
   });
@@ -47,6 +51,7 @@ export default function ExportReport() {
       return;
     }
     setGenerating(true);
+    setReportError(false);
     setResult(null);
     generateReport.mutate({
       projectId: scope === "project" && projectId ? projectId : undefined,
@@ -147,6 +152,24 @@ export default function ExportReport() {
                     <><FileText className="h-4 w-4 mr-2" /> Generate Report</>
                   )}
                 </Button>
+
+                {reportError && (
+                  <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />
+                        <div>
+                          <p className="text-sm font-medium text-destructive">Couldn't generate the report.</p>
+                          <p className="text-xs text-muted-foreground">Try again in a moment.</p>
+                        </div>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={handleGenerate}>
+                        <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                        Retry
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Results */}
                 {result && (
