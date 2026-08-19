@@ -10,6 +10,11 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import {
+  getEffectiveLinkStatus,
+  getEffectiveStatusClass,
+  getEffectiveStatusLabel,
+} from "@/lib/linkStatus";
 
 interface LinkGridCardProps {
   link: {
@@ -22,6 +27,8 @@ interface LinkGridCardProps {
     clickCount: number;
     status: string;
     tags: string[] | null;
+    activeFrom?: number | null;
+    expiresAt?: number | null;
     createdAt: string | Date;
     updatedAt: string | Date;
   };
@@ -87,6 +94,7 @@ export default function LinkGridCard({
 }: LinkGridCardProps) {
   const [copied, setCopied] = useState(false);
   const baseUrl = window.location.origin;
+  const effectiveStatus = getEffectiveLinkStatus(link);
 
   const copyLink = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -113,6 +121,16 @@ export default function LinkGridCard({
       day: "numeric",
     });
   };
+
+  const statusTooltip = (() => {
+    if (effectiveStatus === "scheduled" && link.activeFrom) {
+      return `Starts ${new Date(link.activeFrom).toLocaleString()}`;
+    }
+    if (effectiveStatus === "expired" && link.expiresAt) {
+      return `Expired ${new Date(link.expiresAt).toLocaleString()}`;
+    }
+    return "Click to pause or resume";
+  })();
 
   return (
     <div
@@ -248,13 +266,10 @@ export default function LinkGridCard({
           </span>
           <button
             onClick={onToggleStatus}
-            className={`text-[10px] font-medium px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
-              link.status === "active"
-                ? "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400 hover:bg-green-100"
-                : "bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 hover:bg-yellow-100"
-            }`}
+            title={statusTooltip}
+            className={`text-[10px] font-medium px-1.5 py-0.5 rounded cursor-pointer transition-colors ${getEffectiveStatusClass(effectiveStatus)}`}
           >
-            {link.status}
+            {getEffectiveStatusLabel(effectiveStatus)}
           </button>
         </div>
       </div>
