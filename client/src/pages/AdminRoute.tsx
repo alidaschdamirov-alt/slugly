@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Loader2 } from "lucide-react";
+import AdminIpAllowlistPanel from "./AdminIpAllowlistPanel";
 import AdminPanelWithSecurity from "./AdminPanelWithSecurity";
 import PrivilegedSessionsPanel from "./PrivilegedSessionsPanel";
 import SupportAdminPanel from "./SupportAdminPanel";
@@ -21,6 +22,7 @@ export default function AdminRoute() {
       <>
         <AdminPanelWithSecurity />
         <PrivilegedSessionsPanel />
+        <AdminIpAllowlistPanel />
       </>
     );
   }
