@@ -1,9 +1,9 @@
 import * as Sentry from "@sentry/react";
 import { ClerkProvider } from "@clerk/react";
 import { trpc } from "@/lib/trpc";
+import { injectAdminReasons } from "@/lib/adminReasonTransport";
 import { UNAUTHED_ERR_MSG } from "@shared/const";
 
-// Initialize Sentry for frontend error tracking
 const sentryDsn = import.meta.env.VITE_SENTRY_DSN;
 if (sentryDsn) {
   Sentry.init({
@@ -34,11 +34,8 @@ if (!clerkPublishableKey) {
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;
   if (typeof window === "undefined") return;
-
   const isUnauthorized = error.message === UNAUTHED_ERR_MSG;
-
   if (!isUnauthorized) return;
-
   window.location.href = getLoginUrl();
 };
 
@@ -58,6 +55,12 @@ queryClient.getMutationCache().subscribe(event => {
   }
 });
 
+function requestUrl(input: RequestInfo | URL) {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
 const trpcClient = trpc.createClient({
   links: [
     httpBatchLink({
@@ -68,8 +71,25 @@ const trpcClient = trpc.createClient({
         return wsId ? { "x-workspace-id": wsId } : {};
       },
       fetch(input, init) {
+        let nextInit = init;
+        if (typeof window !== "undefined" && typeof init?.body === "string") {
+          try {
+            const nextBody = injectAdminReasons(
+              requestUrl(input),
+              init.body,
+              label => window.prompt(`${label}:\n\nThis reason will be stored in the Slugly audit log.`)
+            );
+            if (nextBody !== init.body) {
+              nextInit = { ...init, body: nextBody as BodyInit };
+            }
+          } catch (error: any) {
+            window.alert(error?.message || "Administrative action canceled.");
+            return Promise.reject(error);
+          }
+        }
+
         return globalThis.fetch(input, {
-          ...(init ?? {}),
+          ...(nextInit ?? {}),
           credentials: "include",
         });
       },
