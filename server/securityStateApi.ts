@@ -12,6 +12,13 @@ import {
   type LinkQuarantineState,
 } from "./linkQuarantine";
 import {
+  getPrivilegedIpAllowlist,
+  getRequestClientIp,
+  isIpAllowedByRules,
+  isPrivilegedIpAllowed,
+  savePrivilegedIpAllowlist,
+} from "./privilegedIp";
+import {
   getSecurityRateLimitSettings,
   saveSecurityRateLimitSettings,
 } from "./rateLimit";
@@ -51,7 +58,11 @@ async function requirePrivileged(
     return null;
   }
   if (!sdk.hasVerifiedSecondFactor(req)) {
-    res.status(403).json({ error: "Two-factor authentication is required for privileged security actions." });
+    res.status(403).json({ error: "Two-factor authentication is required for privileged security actions.", code: "MFA_REQUIRED" });
+    return null;
+  }
+  if (!(await isPrivilegedIpAllowed(req))) {
+    res.status(403).json({ error: "This IP address is not allowed to use privileged tools.", code: "IP_NOT_ALLOWED" });
     return null;
   }
   return user;
@@ -70,25 +81,17 @@ securityStateRouter.get("/links", async (req: Request, res: Response) => {
     if (ids.length === 0) return res.json({ states: {} });
 
     const userLinks = await getLinksByUserId(user.id);
-    const ownedIds = new Set(
-      userLinks.filter(link => ids.includes(link.id)).map(link => link.id)
-    );
-
+    const ownedIds = new Set(userLinks.filter(link => ids.includes(link.id)).map(link => link.id));
     const states: Record<number, LinkQuarantineState> = {};
-    await Promise.all(
-      ids.map(async id => {
-        if (!ownedIds.has(id)) return;
-        const state = await getLinkQuarantineState(id);
-        if (state) states[id] = state;
-      })
-    );
-
+    await Promise.all(ids.map(async id => {
+      if (!ownedIds.has(id)) return;
+      const state = await getLinkQuarantineState(id);
+      if (state) states[id] = state;
+    }));
     return res.json({ states });
   } catch (error: any) {
     const status = error?.code === "FORBIDDEN" ? 401 : 500;
-    return res.status(status).json({
-      error: status === 401 ? "Unauthorized" : "Failed to load security state",
-    });
+    return res.status(status).json({ error: status === 401 ? "Unauthorized" : "Failed to load security state" });
   }
 });
 
@@ -96,7 +99,6 @@ securityStateRouter.get("/admin/quarantine", async (req: Request, res: Response)
   try {
     const actor = await requirePrivileged(req, res);
     if (!actor) return;
-
     const database = await getDb();
     if (!database) return res.status(503).json({ error: "Database unavailable" });
 
@@ -115,23 +117,14 @@ securityStateRouter.get("/admin/quarantine", async (req: Request, res: Response)
         return [];
       }
     });
-
-    if (parsed.length === 0) return res.json({ links: [] });
+    if (parsed.length === 0) return res.json({ links: [], role: actor.role });
 
     const ids = parsed.map(item => item.id);
     const linkRows = await database
-      .select({
-        id: links.id,
-        userId: links.userId,
-        shortCode: links.shortCode,
-        destinationUrl: links.destinationUrl,
-        status: links.status,
-        createdAt: links.createdAt,
-      })
+      .select({ id: links.id, userId: links.userId, shortCode: links.shortCode, destinationUrl: links.destinationUrl, status: links.status, createdAt: links.createdAt })
       .from(links)
       .where(inArray(links.id, ids));
     const linkMap = new Map(linkRows.map(link => [link.id, link]));
-
     const result = parsed
       .map(item => {
         const link = linkMap.get(item.id);
@@ -139,13 +132,10 @@ securityStateRouter.get("/admin/quarantine", async (req: Request, res: Response)
       })
       .filter(Boolean)
       .sort((a: any, b: any) => b.quarantine.updatedAt - a.quarantine.updatedAt);
-
     return res.json({ links: result, role: actor.role });
   } catch (error: any) {
     const status = error?.code === "FORBIDDEN" ? 401 : 500;
-    return res.status(status).json({
-      error: status === 401 ? "Unauthorized" : "Failed to load quarantine queue",
-    });
+    return res.status(status).json({ error: status === 401 ? "Unauthorized" : "Failed to load quarantine queue" });
   }
 });
 
@@ -153,41 +143,23 @@ securityStateRouter.post("/admin/quarantine/:id/review", async (req: Request, re
   try {
     const actor = await requirePrivileged(req, res);
     if (!actor) return;
-
     const linkId = Number(req.params.id);
-    if (!Number.isInteger(linkId) || linkId <= 0) {
-      return res.status(400).json({ error: "Invalid link id" });
-    }
+    if (!Number.isInteger(linkId) || linkId <= 0) return res.status(400).json({ error: "Invalid link id" });
 
     const action = req.body?.action;
-    if (action !== "rescan" && action !== "release") {
-      return res.status(400).json({ error: "Action must be rescan or release" });
-    }
-    if (action === "release" && actor.role !== "admin") {
-      return res.status(403).json({ error: "Only administrators may force-release quarantined links." });
-    }
+    if (action !== "rescan" && action !== "release") return res.status(400).json({ error: "Action must be rescan or release" });
+    if (action === "release" && actor.role !== "admin") return res.status(403).json({ error: "Only administrators may force-release quarantined links." });
 
     const reason = normalizeReason(req.body?.reason);
-    if (!reason) {
-      return res.status(400).json({ error: "A review reason is required (3-1000 characters)." });
-    }
+    if (!reason) return res.status(400).json({ error: "A review reason is required (3-1000 characters)." });
 
     const link = await getLinkById(linkId);
     if (!link) return res.status(404).json({ error: "Link not found" });
-
     const current = await getLinkQuarantineState(linkId);
-    if (!current) {
-      return res.status(409).json({ error: "Link is not currently quarantined" });
-    }
+    if (!current) return res.status(409).json({ error: "Link is not currently quarantined" });
 
     if (action === "release") {
-      await clearLinkQuarantine({
-        linkId,
-        shortCode: link.shortCode,
-        actorId: actor.id,
-        actorName: actor.name || actor.email || actor.role,
-        reason: `Manual admin release: ${reason}`,
-      });
+      await clearLinkQuarantine({ linkId, shortCode: link.shortCode, actorId: actor.id, actorName: actor.name || actor.email || actor.role, reason: `Manual admin release: ${reason}` });
       return res.json({ ok: true, action, verdict: "manual-release", released: true });
     }
 
@@ -202,7 +174,6 @@ securityStateRouter.post("/admin/quarantine/:id/review", async (req: Request, re
       });
       return res.json({ ok: true, action, verdict: safety.verdict, released: true });
     }
-
     if (safety.verdict === "malicious") {
       await quarantineLink({
         linkId,
@@ -213,27 +184,12 @@ securityStateRouter.post("/admin/quarantine/:id/review", async (req: Request, re
         actorId: actor.id,
         actorName: actor.name || actor.email || actor.role,
       });
-      return res.status(409).json({
-        ok: false,
-        action,
-        verdict: safety.verdict,
-        released: false,
-        reason: safety.reason || "Destination is still unsafe",
-      });
+      return res.status(409).json({ ok: false, action, verdict: safety.verdict, released: false, reason: safety.reason || "Destination is still unsafe" });
     }
-
-    return res.status(503).json({
-      ok: false,
-      action,
-      verdict: "unknown",
-      released: false,
-      reason: safety.reason || "Security provider is unavailable. Quarantine remains in place.",
-    });
+    return res.status(503).json({ ok: false, action, verdict: "unknown", released: false, reason: safety.reason || "Security provider is unavailable. Quarantine remains in place." });
   } catch (error: any) {
     const status = error?.code === "FORBIDDEN" ? 401 : 500;
-    return res.status(status).json({
-      error: status === 401 ? "Unauthorized" : error?.message || "Quarantine review failed",
-    });
+    return res.status(status).json({ error: status === 401 ? "Unauthorized" : error?.message || "Quarantine review failed" });
   }
 });
 
@@ -253,16 +209,12 @@ securityStateRouter.put("/admin/rate-limits", async (req: Request, res: Response
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
-
     const reason = normalizeReason(req.body?.reason);
-    if (!reason) {
-      return res.status(400).json({ error: "A change reason is required (3-1000 characters)." });
-    }
+    if (!reason) return res.status(400).json({ error: "A change reason is required (3-1000 characters)." });
 
     const database = await getDb();
     if (!database) return res.status(503).json({ error: "Database unavailable" });
     const settings = await saveSecurityRateLimitSettings(database, req.body?.settings);
-
     await writeAuditEvent({
       event: AUDIT_EVENTS.SETTINGS_UPDATE,
       actorId: admin.id,
@@ -273,9 +225,51 @@ securityStateRouter.put("/admin/rate-limits", async (req: Request, res: Response
       reason,
       ...getAuditRequestContext(req),
     });
-
     return res.json({ ok: true, settings });
   } catch (error: any) {
     return res.status(500).json({ error: error?.message || "Failed to update rate-limit settings" });
+  }
+});
+
+securityStateRouter.get("/admin/ip-allowlist", async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    return res.json({ rules: await getPrivilegedIpAllowlist(), currentIp: getRequestClientIp(req) });
+  } catch (error: any) {
+    return res.status(500).json({ error: error?.message || "Failed to load privileged IP allowlist" });
+  }
+});
+
+securityStateRouter.put("/admin/ip-allowlist", async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const reason = normalizeReason(req.body?.reason);
+    if (!reason) return res.status(400).json({ error: "A change reason is required (3-1000 characters)." });
+
+    const rawRules = Array.isArray(req.body?.rules) ? req.body.rules : [];
+    const rules = rawRules.map((item: unknown) => String(item).trim()).filter(Boolean).slice(0, 200);
+    const currentIp = getRequestClientIp(req);
+    if (!isIpAllowedByRules(currentIp, rules)) {
+      return res.status(400).json({
+        error: `The new allowlist would block your current IP (${currentIp || "unknown"}). Include it or clear the list before saving.`,
+      });
+    }
+
+    const saved = await savePrivilegedIpAllowlist(rules);
+    await writeAuditEvent({
+      event: AUDIT_EVENTS.SETTINGS_UPDATE,
+      actorId: admin.id,
+      actorName: admin.name || admin.email || "admin",
+      targetType: "system",
+      targetId: "privileged_ip_allowlist",
+      payload: { rules: saved, currentIp },
+      reason,
+      ...getAuditRequestContext(req),
+    });
+    return res.json({ ok: true, rules: saved, currentIp });
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || "Failed to update privileged IP allowlist" });
   }
 });
