@@ -15,6 +15,7 @@ export type TrpcContext = {
   user: User | null;
   actorUser?: User | null;
   impersonation?: ImpersonationSession | null;
+  mfaVerified?: boolean;
   workspace: Workspace | null;
   membership: WorkspaceMember | null;
 };
@@ -25,11 +26,15 @@ export async function createContext(
   let user: User | null = null;
   let actorUser: User | null = null;
   let impersonation: ImpersonationSession | null = null;
+  let mfaVerified: boolean | undefined;
   let workspace: Workspace | null = null;
   let membership: WorkspaceMember | null = null;
 
   try {
     actorUser = await sdk.authenticateRequest(opts.req);
+    if (actorUser.role === "admin" || actorUser.role === "support") {
+      mfaVerified = sdk.hasVerifiedSecondFactor(opts.req);
+    }
     const resolved = await resolveImpersonation(opts.req, actorUser);
     if (resolved) {
       user = resolved.target;
@@ -84,6 +89,7 @@ export async function createContext(
     user,
     actorUser,
     impersonation,
+    mfaVerified,
     workspace,
     membership,
   };
