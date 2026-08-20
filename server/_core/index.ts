@@ -15,6 +15,8 @@ import { serveStatic, setupVite } from "./vite";
 import { redirectRouter } from "../redirect";
 import { quarantineGuardRouter } from "../quarantineGuard";
 import { securityStateRouter } from "../securityStateApi";
+import { systemHealthRouter } from "../systemHealthApi";
+import { backgroundJobTelemetryMiddleware, systemHealthMetricsMiddleware } from "../systemHealth";
 import { impersonationRouter } from "../impersonationApi";
 import { resolveImpersonation } from "../impersonation";
 import { isPrivilegedRole } from "../adminAccess";
@@ -98,6 +100,8 @@ async function startServer() {
   const server = createServer(app);
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  app.use(systemHealthMetricsMiddleware);
+  app.use(backgroundJobTelemetryMiddleware);
   registerStorageRoutes(app);
 
   app.use("/api/impersonation", impersonationRouter);
@@ -109,6 +113,7 @@ async function startServer() {
   );
 
   app.use("/api/security", securityStateRouter);
+  app.use("/api/system-health", systemHealthRouter);
 
   app.get("/healthz", (_req, res) => {
     res.json({ status: "ok", uptime: process.uptime(), timestamp: Date.now() });
