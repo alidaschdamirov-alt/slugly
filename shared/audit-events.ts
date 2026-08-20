@@ -1,8 +1,13 @@
 export const AUDIT_EVENTS = {
+  ADMIN_MUTATION: "admin.mutation",
+
   USER_ROLE_CHANGE: "user.role_change",
   BILLING_CHANGE_PLAN: "billing.change_plan",
   SETTINGS_UPDATE: "settings.update",
   EMAIL_CONFIG_UPDATED: "email.config_updated",
+  EMAIL_TEMPLATE_UPDATED: "email.template_updated",
+  EMAIL_TEMPLATE_PREVIEW: "email.template_preview",
+  EMAIL_TEST_SEND: "email.test_send",
 
   USER_SUSPEND: "user.suspend",
   USER_UNSUSPEND: "user.unsuspend",
@@ -20,10 +25,21 @@ export const AUDIT_EVENTS = {
   NOTIFICATION_SEND: "notification.send",
   BACKUP_EXPORT: "backup.export",
   PLAN_LIMITS_UPDATE: "plan.limits_update",
+  PLAN_CONFIGS_UPDATE: "plan.configs_update",
+  WORKSPACE_PLAN_OVERRIDE: "workspace.plan_override",
+  RESERVED_SLUGS_UPDATE: "config.reserved_slugs",
 } as const;
 
 export type AuditEvent = typeof AUDIT_EVENTS[keyof typeof AUDIT_EVENTS];
-export type AuditTargetType = "user" | "link" | "workspace" | "domain" | "report" | "system";
+export type AuditTargetType =
+  | "user"
+  | "link"
+  | "workspace"
+  | "domain"
+  | "report"
+  | "notification"
+  | "email_template"
+  | "system";
 
 export interface AuditEntry {
   event: AuditEvent;
