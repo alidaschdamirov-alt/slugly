@@ -3,6 +3,11 @@ import { destinationUrlSchema } from '@shared/validation/destination-url';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
+import {
+  getAuditRequestContext,
+  getAutomaticAdminAuditDescriptor,
+  writeAuditEvent,
+} from "../audit";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -168,11 +173,43 @@ export const adminProcedure = baseProcedure.use(
       throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
     }
 
-    return next({
+    const rawInput = await opts.getRawInput().catch(() => undefined);
+    const input = rawInput && typeof rawInput === "object"
+      ? rawInput as Record<string, unknown>
+      : {};
+
+    const result = await next({
       ctx: {
         ...ctx,
         user: ctx.user,
       },
     });
+
+    const procedureType = (opts as { type?: string }).type;
+    if (procedureType === "mutation") {
+      const descriptor = getAutomaticAdminAuditDescriptor(opts.path);
+      if (descriptor) {
+        const request = getAuditRequestContext(ctx.req);
+        const reason = descriptor.reasonField && typeof input[descriptor.reasonField] === "string"
+          ? String(input[descriptor.reasonField])
+          : undefined;
+        try {
+          await writeAuditEvent({
+            event: descriptor.event,
+            actorId: ctx.user.id,
+            actorName: ctx.user.name || ctx.user.email || "admin",
+            targetType: descriptor.targetType,
+            targetId: descriptor.targetId?.(input, result) ?? null,
+            payload: descriptor.payload?.(input, result),
+            reason,
+            ...request,
+          });
+        } catch (error) {
+          console.error(`[Audit] Failed to record ${opts.path}:`, error);
+        }
+      }
+    }
+
+    return result;
   }),
 );
