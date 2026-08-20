@@ -24,6 +24,13 @@ export const AUDIT_EVENTS = {
   DOMAIN_UNBLOCK: "domain.unblock",
   REPORT_RESOLVE: "report.resolve",
   REPORT_REJECT: "report.reject",
+  REPORT_ASSIGN: "report.assign",
+  REPORT_STATUS_CHANGE: "report.status_change",
+  REPORT_RESPONSE: "report.response",
+  APPEAL_SUBMIT: "appeal.submit",
+  APPEAL_DECIDE: "appeal.decide",
+  LEGAL_REQUEST_CREATE: "legal_request.create",
+  LEGAL_REQUEST_UPDATE: "legal_request.update",
   NOTIFICATION_SEND: "notification.send",
   BACKUP_EXPORT: "backup.export",
   PLAN_LIMITS_UPDATE: "plan.limits_update",
@@ -42,6 +49,8 @@ export type AuditTargetType =
   | "workspace"
   | "domain"
   | "report"
+  | "appeal"
+  | "legal_request"
   | "notification"
   | "email_template"
   | "system";
