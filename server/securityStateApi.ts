@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from "express";
 import { inArray, like } from "drizzle-orm";
 import { links, siteSettings } from "../drizzle/schema";
+import { AUDIT_EVENTS } from "../shared/audit-events";
+import { getAuditRequestContext, writeAuditEvent } from "./audit";
 import { getDb, getLinkById, getLinksByUserId } from "./db";
 import {
   clearLinkQuarantine,
@@ -8,6 +10,10 @@ import {
   quarantineLink,
   type LinkQuarantineState,
 } from "./linkQuarantine";
+import {
+  getSecurityRateLimitSettings,
+  saveSecurityRateLimitSettings,
+} from "./rateLimit";
 import { checkUrlSafety } from "./safeBrowsing";
 import { sdk } from "./_core/sdk";
 
@@ -210,5 +216,48 @@ securityStateRouter.post("/admin/quarantine/:id/review", async (req: Request, re
     return res.status(status).json({
       error: status === 401 ? "Unauthorized" : error?.message || "Quarantine review failed",
     });
+  }
+});
+
+securityStateRouter.get("/admin/rate-limits", async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const database = await getDb();
+    if (!database) return res.status(503).json({ error: "Database unavailable" });
+    return res.json(await getSecurityRateLimitSettings(database));
+  } catch (error: any) {
+    return res.status(500).json({ error: error?.message || "Failed to load rate-limit settings" });
+  }
+});
+
+securityStateRouter.put("/admin/rate-limits", async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const reason = normalizeReason(req.body?.reason);
+    if (!reason) {
+      return res.status(400).json({ error: "A change reason is required (3-1000 characters)." });
+    }
+
+    const database = await getDb();
+    if (!database) return res.status(503).json({ error: "Database unavailable" });
+    const settings = await saveSecurityRateLimitSettings(database, req.body?.settings);
+
+    await writeAuditEvent({
+      event: AUDIT_EVENTS.SETTINGS_UPDATE,
+      actorId: admin.id,
+      actorName: admin.name || admin.email || "admin",
+      targetType: "system",
+      targetId: "security_rate_limits",
+      payload: { settings },
+      reason,
+      ...getAuditRequestContext(req),
+    });
+
+    return res.json({ ok: true, settings });
+  } catch (error: any) {
+    return res.status(500).json({ error: error?.message || "Failed to update rate-limit settings" });
   }
 });
