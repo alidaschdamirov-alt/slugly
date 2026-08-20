@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Download, Copy, Check } from "lucide-react";
+import { Download, Copy, Check, AlertTriangle, Pencil } from "lucide-react";
 import QRCode from "qrcode";
 
 interface QrCodeDialogProps {
@@ -9,9 +9,11 @@ interface QrCodeDialogProps {
   onOpenChange: (open: boolean) => void;
   url: string;
   title?: string;
+  isBroken?: boolean;
+  onEditDestination?: () => void;
 }
 
-export function QrCodeDialog({ open, onOpenChange, url, title }: QrCodeDialogProps) {
+export function QrCodeDialog({ open, onOpenChange, url, title, isBroken = false, onEditDestination }: QrCodeDialogProps) {
   const [copied, setCopied] = useState(false);
   const [svgData, setSvgData] = useState("");
 
@@ -77,6 +79,26 @@ export function QrCodeDialog({ open, onOpenChange, url, title }: QrCodeDialogPro
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col items-center gap-4 py-4">
+          {isBroken && (
+            <div className="w-full rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm text-orange-800 dark:border-orange-900/50 dark:bg-orange-950/30 dark:text-orange-200">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">This link&apos;s destination is unreachable.</p>
+                  <p className="mt-1 text-xs opacity-90">
+                    Anyone scanning this code will get an error. Fix the destination before printing or sharing.
+                  </p>
+                  {onEditDestination && (
+                    <Button type="button" variant="outline" size="sm" className="mt-3" onClick={onEditDestination}>
+                      <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                      Edit destination
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="bg-white p-3 sm:p-4 rounded-xl border border-border">
             {dataUrl ? (
               <img src={dataUrl} alt="QR Code" className="w-[200px] h-[200px] sm:w-[280px] sm:h-[280px]" />
