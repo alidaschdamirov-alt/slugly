@@ -11,6 +11,7 @@ import {
   requireAuditReason,
   writeAuditEvent,
 } from "../audit";
+import { canAccessAdminProcedure } from "../adminAccess";
 import { isDestinationBlockedByPolicy } from "../blocklist";
 import {
   clearLinkQuarantine,
@@ -56,6 +57,38 @@ function getDestinationCandidates(path: string, rawInput: unknown): DestinationC
 function validateDestinationInput(path: string, rawInput: unknown) {
   for (const candidate of getDestinationCandidates(path, rawInput)) assertDestinationUrl(candidate.url);
 }
+
+const impersonationReadOnly = t.middleware(async opts => {
+  const impersonation = opts.ctx.impersonation;
+  if (!impersonation) return opts.next();
+
+  const procedureType = (opts as { type?: string }).type;
+  if (procedureType === "mutation") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "This support session is read-only. Exit View as user to make changes.",
+    });
+  }
+
+  const result = await opts.next();
+  await writeAuditEvent({
+    event: AUDIT_EVENTS.USER_IMPERSONATE_ACTION,
+    actorId: impersonation.actorId,
+    actorName: impersonation.actorEmail || "support",
+    targetType: "user",
+    targetId: impersonation.targetUserId,
+    payload: {
+      sessionId: impersonation.id,
+      path: opts.path,
+      procedureType: procedureType || "query",
+      actor: impersonation.actorEmail,
+      on_behalf_of: impersonation.targetEmail,
+      readOnly: true,
+    },
+    ...getAuditRequestContext(opts.ctx.req),
+  }).catch(error => console.error(`[Audit] Failed to record impersonated ${opts.path}:`, error));
+  return result;
+});
 
 const validateDestinationUrls = t.middleware(async opts => {
   if (DESTINATION_PROCEDURES.has(opts.path)) validateDestinationInput(opts.path, await opts.getRawInput());
@@ -155,7 +188,10 @@ const enforceDestinationSafety = t.middleware(async opts => {
   return result;
 });
 
-const baseProcedure = t.procedure.use(validateDestinationUrls).use(enforceDestinationSafety);
+const baseProcedure = t.procedure
+  .use(impersonationReadOnly)
+  .use(validateDestinationUrls)
+  .use(enforceDestinationSafety);
 export const publicProcedure = baseProcedure;
 
 const requireUser = t.middleware(async opts => {
@@ -195,7 +231,15 @@ export const wsAdminProcedure = baseProcedure.use(requireWsAdmin);
 
 export const adminProcedure = baseProcedure.use(t.middleware(async opts => {
   const { ctx, next } = opts;
-  if (!ctx.user || ctx.user.role !== 'admin') throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+  const actor = ctx.actorUser || ctx.user;
+  const procedureType = (opts as { type?: string }).type;
+
+  if (ctx.impersonation) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Exit View as user before opening admin tools." });
+  }
+  if (!actor || !canAccessAdminProcedure(actor.role, opts.path, procedureType)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+  }
 
   const rawInput = await opts.getRawInput().catch(() => undefined);
   const input = rawInput && typeof rawInput === "object" ? rawInput as Record<string, unknown> : {};
@@ -208,8 +252,7 @@ export const adminProcedure = baseProcedure.use(t.middleware(async opts => {
       )
     : undefined;
 
-  const result = await next({ ctx: { ...ctx, user: ctx.user } });
-  const procedureType = (opts as { type?: string }).type;
+  const result = await next({ ctx: { ...ctx, user: actor, actorUser: actor } });
   if (procedureType === "mutation") {
     if (opts.path === "admin.addBlockedDomain" || opts.path === "admin.removeBlockedDomain") {
       const { invalidateBlocklistCache } = await import("../blocklist");
@@ -217,12 +260,11 @@ export const adminProcedure = baseProcedure.use(t.middleware(async opts => {
     }
 
     const request = getAuditRequestContext(ctx.req);
-
     if (requiredReasonDescriptor) {
       await writeAuditEvent({
         event: requiredReasonDescriptor.event,
-        actorId: ctx.user.id,
-        actorName: ctx.user.name || ctx.user.email || "admin",
+        actorId: actor.id,
+        actorName: actor.name || actor.email || actor.role,
         targetType: requiredReasonDescriptor.targetType,
         targetId: requiredReasonDescriptor.targetId?.(input, result) ?? null,
         payload: requiredReasonDescriptor.payload?.(input, result),
@@ -237,8 +279,8 @@ export const adminProcedure = baseProcedure.use(t.middleware(async opts => {
       try {
         await writeAuditEvent({
           event: descriptor.event,
-          actorId: ctx.user.id,
-          actorName: ctx.user.name || ctx.user.email || "admin",
+          actorId: actor.id,
+          actorName: actor.name || actor.email || actor.role,
           targetType: descriptor.targetType,
           targetId: descriptor.targetId?.(input, result) ?? null,
           payload: descriptor.payload?.(input, result),
