@@ -24,15 +24,12 @@ const t = initTRPC.context<TrpcContext>().create({ transformer: superjson });
 export const router = t.router;
 
 const DESTINATION_PROCEDURES = new Set(["link.create", "link.update", "link.createBulk", "link.shortenAnonymous"]);
-
 interface DestinationCandidate { url: string; linkId?: number; }
 
 function assertDestinationUrl(value: unknown) {
   if (typeof value !== "string") return;
   const result = destinationUrlSchema.safeParse(value);
-  if (!result.success) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: result.error.issues[0]?.message || "Enter a valid destination URL." });
-  }
+  if (!result.success) throw new TRPCError({ code: "BAD_REQUEST", message: result.error.issues[0]?.message || "Enter a valid destination URL." });
 }
 
 function getDestinationCandidates(path: string, rawInput: unknown): DestinationCandidate[] {
@@ -61,15 +58,10 @@ function validateDestinationInput(path: string, rawInput: unknown) {
 const impersonationReadOnly = t.middleware(async opts => {
   const impersonation = opts.ctx.impersonation;
   if (!impersonation) return opts.next();
-
   const procedureType = (opts as { type?: string }).type;
   if (procedureType === "mutation") {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "This support session is read-only. Exit View as user to make changes.",
-    });
+    throw new TRPCError({ code: "FORBIDDEN", message: "This support session is read-only. Exit View as user to make changes." });
   }
-
   const result = await opts.next();
   await writeAuditEvent({
     event: AUDIT_EVENTS.USER_IMPERSONATE_ACTION,
@@ -165,7 +157,6 @@ const enforceDestinationSafety = t.middleware(async opts => {
     const safety: SafetyResult = blockedByPolicy
       ? { safe: false, verdict: "malicious", threatTypes: ["BLOCKLIST"], reason: "Destination domain is blocked by Slugly security policy" }
       : await checkUrlSafety(candidate.url);
-
     if (safety.verdict === "unknown") {
       await writeSafetyVerdictAudit({ ctx: opts.ctx, path: opts.path, candidate, safety, event: AUDIT_EVENTS.SAFETY_CHECK_UNKNOWN })
         .catch(error => console.error("[Audit] Failed to record unknown Safe Browsing verdict:", error));
@@ -179,7 +170,6 @@ const enforceDestinationSafety = t.middleware(async opts => {
     }
     if (opts.path === "link.update" && safety.verdict === "clean") cleanUpdates.push(candidate);
   }
-
   const result = await opts.next();
   for (const candidate of cleanUpdates) {
     await releaseQuarantineAfterCleanUpdate(opts.ctx, candidate)
@@ -188,10 +178,7 @@ const enforceDestinationSafety = t.middleware(async opts => {
   return result;
 });
 
-const baseProcedure = t.procedure
-  .use(impersonationReadOnly)
-  .use(validateDestinationUrls)
-  .use(enforceDestinationSafety);
+const baseProcedure = t.procedure.use(impersonationReadOnly).use(validateDestinationUrls).use(enforceDestinationSafety);
 export const publicProcedure = baseProcedure;
 
 const requireUser = t.middleware(async opts => {
@@ -234,11 +221,15 @@ export const adminProcedure = baseProcedure.use(t.middleware(async opts => {
   const actor = ctx.actorUser || ctx.user;
   const procedureType = (opts as { type?: string }).type;
 
-  if (ctx.impersonation) {
-    throw new TRPCError({ code: "FORBIDDEN", message: "Exit View as user before opening admin tools." });
-  }
+  if (ctx.impersonation) throw new TRPCError({ code: "FORBIDDEN", message: "Exit View as user before opening admin tools." });
   if (!actor || !canAccessAdminProcedure(actor.role, opts.path, procedureType)) {
     throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+  }
+  if ((actor.role === "admin" || actor.role === "support") && ctx.mfaVerified === false) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Two-factor authentication is required for admin and support tools.",
+    });
   }
 
   const rawInput = await opts.getRawInput().catch(() => undefined);
@@ -246,10 +237,7 @@ export const adminProcedure = baseProcedure.use(t.middleware(async opts => {
   const requiredReasonDescriptor = getRequiredAdminReasonDescriptor(opts.path);
   const requiredReasonField = requiredReasonDescriptor?.reasonField || "reason";
   const requiredReason = requiredReasonDescriptor
-    ? requireAuditReason(
-        requiredReasonDescriptor.event,
-        typeof input[requiredReasonField] === "string" ? String(input[requiredReasonField]) : undefined
-      )
+    ? requireAuditReason(requiredReasonDescriptor.event, typeof input[requiredReasonField] === "string" ? String(input[requiredReasonField]) : undefined)
     : undefined;
 
   const result = await next({ ctx: { ...ctx, user: actor, actorUser: actor } });
@@ -258,7 +246,6 @@ export const adminProcedure = baseProcedure.use(t.middleware(async opts => {
       const { invalidateBlocklistCache } = await import("../blocklist");
       invalidateBlocklistCache();
     }
-
     const request = getAuditRequestContext(ctx.req);
     if (requiredReasonDescriptor) {
       await writeAuditEvent({
@@ -272,7 +259,6 @@ export const adminProcedure = baseProcedure.use(t.middleware(async opts => {
         ...request,
       }).catch(error => console.error(`[Audit] Failed to record reason for ${opts.path}:`, error));
     }
-
     const descriptor = getAutomaticAdminAuditDescriptor(opts.path);
     if (descriptor) {
       const reason = descriptor.reasonField && typeof input[descriptor.reasonField] === "string" ? String(input[descriptor.reasonField]) : undefined;
