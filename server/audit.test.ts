@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AUDIT_EVENTS } from "../shared/audit-events";
-import { requireAuditReason, writeAuditEvent } from "./audit";
+import {
+  getAutomaticAdminAuditDescriptor,
+  requireAuditReason,
+  writeAuditEvent,
+} from "./audit";
 import * as db from "./db";
 
 vi.mock("./db", () => ({
@@ -48,5 +52,32 @@ describe("audit writer", () => {
         userAgent: "Slugly QA",
       },
     });
+  });
+
+  it("does not duplicate legacy mutations that already write audit rows", () => {
+    expect(getAutomaticAdminAuditDescriptor("admin.deleteUser")).toBeNull();
+    expect(getAutomaticAdminAuditDescriptor("admin.updatePlanLimits")).toBeNull();
+  });
+
+  it("uses a specific event for admin test email", () => {
+    const descriptor = getAutomaticAdminAuditDescriptor("admin.sendTestEmail");
+    expect(descriptor?.event).toBe(AUDIT_EVENTS.EMAIL_TEST_SEND);
+    expect(descriptor?.payload?.({ to: "qa@example.com", templateType: "welcome" }, null)).toEqual({
+      to: "qa@example.com",
+      templateType: "welcome",
+    });
+  });
+
+  it("automatically audits future admin mutations through a generic event", () => {
+    const descriptor = getAutomaticAdminAuditDescriptor("admin.futureDangerousMutation");
+    expect(descriptor?.event).toBe(AUDIT_EVENTS.ADMIN_MUTATION);
+    expect(descriptor?.payload?.({ id: 42, secret: "not-copied" }, null)).toEqual({
+      path: "admin.futureDangerousMutation",
+      inputKeys: ["id", "secret"],
+    });
+  });
+
+  it("does not create fallback descriptors outside admin namespace", () => {
+    expect(getAutomaticAdminAuditDescriptor("link.update")).toBeNull();
   });
 });
