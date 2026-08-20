@@ -17,23 +17,37 @@ const mockedDb = vi.mocked(db);
 describe("audit writer", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("requires a reason for irreversible admin actions", () => {
-    expect(() => requireAuditReason(AUDIT_EVENTS.USER_DELETE)).toThrow("reason is required");
-    expect(() => requireAuditReason(AUDIT_EVENTS.LINK_DELETE, "   ")).toThrow("reason is required");
+  it("requires a reason for restrictive and irreversible admin actions", () => {
+    for (const event of [
+      AUDIT_EVENTS.USER_SUSPEND,
+      AUDIT_EVENTS.USER_DELETE,
+      AUDIT_EVENTS.USER_IMPERSONATE,
+      AUDIT_EVENTS.LINK_PAUSE,
+      AUDIT_EVENTS.LINK_DELETE,
+      AUDIT_EVENTS.LINK_BULK_CLEANUP,
+      AUDIT_EVENTS.DOMAIN_BLOCK,
+      AUDIT_EVENTS.DOMAIN_UNBLOCK,
+    ]) {
+      expect(() => requireAuditReason(event), event).toThrow("reason is required");
+    }
     expect(requireAuditReason(AUDIT_EVENTS.USER_DELETE, "Requested by owner")).toBe("Requested by owner");
   });
 
-  it("maps destructive admin procedures to reason-required audit events", () => {
+  it("maps restrictive admin procedures to reason-required audit events", () => {
+    expect(getRequiredAdminReasonDescriptor("admin.disableLink")?.event).toBe(AUDIT_EVENTS.LINK_PAUSE);
     expect(getRequiredAdminReasonDescriptor("admin.suspendUser")?.event).toBe(AUDIT_EVENTS.USER_SUSPEND);
     expect(getRequiredAdminReasonDescriptor("admin.banUser")?.event).toBe(AUDIT_EVENTS.USER_SUSPEND);
     expect(getRequiredAdminReasonDescriptor("admin.deleteUser")?.event).toBe(AUDIT_EVENTS.USER_DELETE);
     expect(getRequiredAdminReasonDescriptor("admin.deleteLink")?.event).toBe(AUDIT_EVENTS.LINK_DELETE);
     expect(getRequiredAdminReasonDescriptor("admin.cleanupExpiredAnonymous")?.event).toBe(AUDIT_EVENTS.LINK_BULK_CLEANUP);
+    expect(getRequiredAdminReasonDescriptor("admin.addBlockedDomain")?.event).toBe(AUDIT_EVENTS.DOMAIN_BLOCK);
+    expect(getRequiredAdminReasonDescriptor("admin.removeBlockedDomain")?.event).toBe(AUDIT_EVENTS.DOMAIN_UNBLOCK);
     expect(getRequiredAdminReasonDescriptor("admin.unsuspendUser")).toBeNull();
   });
 
-  it("does not require a reason for reversible actions", () => {
+  it("does not require a reason for reversible restore actions", () => {
     expect(requireAuditReason(AUDIT_EVENTS.USER_UNSUSPEND)).toBeUndefined();
+    expect(requireAuditReason(AUDIT_EVENTS.LINK_RESUME)).toBeUndefined();
   });
 
   it("writes event, reason, ip and user agent through one writer", async () => {
