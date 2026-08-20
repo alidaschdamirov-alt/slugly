@@ -6,7 +6,7 @@ export interface LinkQuarantineState {
   quarantined: true;
   reason: string;
   threatTypes: string[];
-  source: "destination-update" | "scheduled-rescan" | "admin";
+  source: "destination-update" | "scheduled-rescan" | "admin" | "support";
   createdAt: number;
   updatedAt: number;
 }
@@ -99,4 +99,8 @@ export async function clearLinkQuarantine(input: {
       reason: input.reason,
     },
   });
+}
+
+export async function isLinkQuarantined(linkId: number) {
+  return !!(await getLinkQuarantineState(linkId));
 }
