@@ -28,6 +28,9 @@ export const AUDIT_EVENTS = {
   PLAN_CONFIGS_UPDATE: "plan.configs_update",
   WORKSPACE_PLAN_OVERRIDE: "workspace.plan_override",
   RESERVED_SLUGS_UPDATE: "config.reserved_slugs",
+
+  SAFETY_DESTINATION_REJECTED: "security.destination_rejected",
+  SAFETY_CHECK_UNKNOWN: "security.safe_browsing_unknown",
 } as const;
 
 export type AuditEvent = typeof AUDIT_EVENTS[keyof typeof AUDIT_EVENTS];
