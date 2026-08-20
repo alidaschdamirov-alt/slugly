@@ -11,7 +11,9 @@ import {
   getEffectiveStatusClass,
   getEffectiveStatusLabel,
 } from "@/lib/linkStatus";
+import { applyLinkSecurityState, useLinkSecurityStates } from "@/lib/securityState";
 import { trpc } from "@/lib/trpc";
+import { useQueryClient } from "@tanstack/react-query";
 import { LayoutGrid, List, Loader2, QrCode, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -29,12 +31,25 @@ export default function QrCodesPage() {
   const { data: domains } = trpc.domain.list.useQuery(undefined, { enabled: !!user });
   const { data: projects } = trpc.project.list.useQuery(undefined, { enabled: !!user });
   const utils = trpc.useUtils();
+  const queryClient = useQueryClient();
+
+  const linkIds = useMemo(() => (links || []).map(link => link.id), [links]);
+  const {
+    data: securityStates,
+    isLoading: securityLoading,
+  } = useLinkSecurityStates(linkIds, !!user && !!links);
+
+  const linksWithSecurity = useMemo(
+    () => (links || []).map(link => applyLinkSecurityState(link, securityStates)),
+    [links, securityStates]
+  );
 
   const updateLink = trpc.link.update.useMutation({
     onSuccess: () => {
       utils.link.list.invalidate();
       utils.project.list.invalidate();
       utils.tag.list.invalidate();
+      queryClient.invalidateQueries({ queryKey: ["link-security-states"] });
       setEditOpen(false);
       setEditLinkRecord(null);
       toast.success("Link updated");
@@ -43,15 +58,14 @@ export default function QrCodesPage() {
   });
 
   const filteredLinks = useMemo(() => {
-    if (!links) return [];
-    if (!search) return links;
+    if (!search) return linksWithSecurity;
     const s = search.toLowerCase();
-    return links.filter(l =>
+    return linksWithSecurity.filter(l =>
       l.shortCode.toLowerCase().includes(s) ||
       l.destinationUrl.toLowerCase().includes(s) ||
       (l.title && l.title.toLowerCase().includes(s))
     );
-  }, [links, search]);
+  }, [linksWithSecurity, search]);
 
   const getQrUrl = (link: any) => {
     if (link.domainId && domains) {
@@ -90,6 +104,8 @@ export default function QrCodesPage() {
     return null;
   }
 
+  const loading = isLoading || (linkIds.length > 0 && securityLoading);
+
   return (
     <AppShell>
       <div className="mx-auto w-full max-w-5xl overflow-x-hidden px-0 py-8 sm:px-4">
@@ -118,7 +134,7 @@ export default function QrCodesPage() {
           <Input placeholder="Search links by slug, title, or destination..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
         </div>
 
-        {isLoading ? (
+        {loading ? (
           <div className="flex h-40 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
         ) : filteredLinks.length === 0 ? (
           <Card className="p-8 text-center">
@@ -137,6 +153,11 @@ export default function QrCodesPage() {
                   </div>
                   {link.title && <p className="mt-0.5 truncate text-xs text-muted-foreground">{link.title}</p>}
                   <p className="truncate text-xs text-muted-foreground/70">{link.destinationUrl}</p>
+                  {link.quarantine?.reason && (
+                    <p className="mt-1 truncate text-xs text-red-700 dark:text-red-300">
+                      Security review: {link.quarantine.reason}
+                    </p>
+                  )}
                 </div>
                 <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
                   <span className="whitespace-nowrap text-sm text-muted-foreground">{link.clickCount.toLocaleString()} clicks</span>
@@ -172,6 +193,8 @@ export default function QrCodesPage() {
           url={getQrUrl(selectedLink)}
           title={selectedLink.shortCode}
           isBroken={getEffectiveLinkStatus(selectedLink) === "broken"}
+          isQuarantined={getEffectiveLinkStatus(selectedLink) === "quarantine"}
+          quarantineReason={selectedLink.quarantine?.reason}
           onEditDestination={openEditFromQr}
         />
       )}
