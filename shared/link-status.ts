@@ -1,9 +1,13 @@
 import { normalizeDestinationUrl } from "./validation/destination-url";
 
-/** Legacy/product list statuses that are stored or derived without security state. */
-export type LinkStatus = "active" | "paused" | "scheduled" | "expired" | "broken";
-/** Security-aware status used when a quarantine state is explicitly attached. */
-export type EffectiveLinkStatus = LinkStatus | "quarantine";
+export type EffectiveLinkStatus = "active" | "paused" | "scheduled" | "expired" | "broken" | "quarantine";
+
+/**
+ * UI maps created before security quarantine used Record<LinkStatus, ...>.
+ * Keep the exported key type open so those maps remain source-compatible while
+ * getLinkStatus itself still returns the strict EffectiveLinkStatus union.
+ */
+export type LinkStatus = string;
 
 export interface LinkStatusInput {
   status?: "active" | "paused" | string | null;
@@ -13,10 +17,6 @@ export interface LinkStatusInput {
   destinationInvalid?: boolean | number | null;
   quarantined?: boolean | number | null;
 }
-
-type NonQuarantineLinkStatusInput = Omit<LinkStatusInput, "quarantined"> & {
-  quarantined?: never;
-};
 
 function toTimestamp(value: number | string | Date | null | undefined): number | null {
   if (value === null || value === undefined || value === "") return null;
@@ -31,8 +31,6 @@ export function isBrokenDestination(link: LinkStatusInput): boolean {
   return normalizeDestinationUrl(link.destinationUrl) === null;
 }
 
-export function getLinkStatus(link: NonQuarantineLinkStatusInput, now?: number): LinkStatus;
-export function getLinkStatus(link: LinkStatusInput, now?: number): EffectiveLinkStatus;
 export function getLinkStatus(link: LinkStatusInput, now = Date.now()): EffectiveLinkStatus {
   if (link.quarantined === true || link.quarantined === 1) return "quarantine";
   if (isBrokenDestination(link)) return "broken";
@@ -46,7 +44,7 @@ export function getLinkStatus(link: LinkStatusInput, now = Date.now()): Effectiv
   return "active";
 }
 
-export function getLinkStatusLabel(status: EffectiveLinkStatus): string {
+export function getLinkStatusLabel(status: LinkStatus): string {
   switch (status) {
     case "quarantine": return "Security quarantine";
     case "broken": return "Broken destination";
@@ -57,7 +55,7 @@ export function getLinkStatusLabel(status: EffectiveLinkStatus): string {
   }
 }
 
-export function getLinkStatusClass(status: EffectiveLinkStatus): string {
+export function getLinkStatusClass(status: LinkStatus): string {
   switch (status) {
     case "quarantine": return "bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-300";
     case "broken": return "bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300";
