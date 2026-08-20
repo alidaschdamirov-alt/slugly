@@ -18,6 +18,7 @@ import { securityStateRouter } from "../securityStateApi";
 import { impersonationRouter } from "../impersonationApi";
 import { resolveImpersonation } from "../impersonation";
 import { isPrivilegedRole } from "../adminAccess";
+import { isPrivilegedIpAllowed } from "../privilegedIp";
 import { backupHandler } from "../backup";
 import { isAuthorizedCronRequest } from "./cronAuth";
 import { getDestinationUrlError, normalizeDestinationUrl } from "../../shared/validation/destination-url";
@@ -212,13 +213,15 @@ async function startServer() {
   app.use("/r", quarantineGuardRouter);
   app.use("/r", redirectRouter);
 
-  // Direct navigation to /admin is protected server-side in addition to API RBAC.
   app.get("/admin", async (req, res, next) => {
     try {
       const actor = await sdk.authenticateRequest(req);
       if (!isPrivilegedRole(actor.role)) return res.status(403).send("Forbidden");
       if (!sdk.hasVerifiedSecondFactor(req)) {
         return res.status(403).send("Two-factor authentication is required for admin and support tools.");
+      }
+      if (!(await isPrivilegedIpAllowed(req))) {
+        return res.status(403).send("This IP address is not allowed to use admin and support tools.");
       }
       return next();
     } catch {
