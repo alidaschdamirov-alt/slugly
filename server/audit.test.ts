@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AUDIT_EVENTS } from "../shared/audit-events";
 import {
   getAutomaticAdminAuditDescriptor,
+  getRequiredAdminReasonDescriptor,
   requireAuditReason,
   writeAuditEvent,
 } from "./audit";
@@ -20,6 +21,15 @@ describe("audit writer", () => {
     expect(() => requireAuditReason(AUDIT_EVENTS.USER_DELETE)).toThrow("reason is required");
     expect(() => requireAuditReason(AUDIT_EVENTS.LINK_DELETE, "   ")).toThrow("reason is required");
     expect(requireAuditReason(AUDIT_EVENTS.USER_DELETE, "Requested by owner")).toBe("Requested by owner");
+  });
+
+  it("maps destructive admin procedures to reason-required audit events", () => {
+    expect(getRequiredAdminReasonDescriptor("admin.suspendUser")?.event).toBe(AUDIT_EVENTS.USER_SUSPEND);
+    expect(getRequiredAdminReasonDescriptor("admin.banUser")?.event).toBe(AUDIT_EVENTS.USER_SUSPEND);
+    expect(getRequiredAdminReasonDescriptor("admin.deleteUser")?.event).toBe(AUDIT_EVENTS.USER_DELETE);
+    expect(getRequiredAdminReasonDescriptor("admin.deleteLink")?.event).toBe(AUDIT_EVENTS.LINK_DELETE);
+    expect(getRequiredAdminReasonDescriptor("admin.cleanupExpiredAnonymous")?.event).toBe(AUDIT_EVENTS.LINK_BULK_CLEANUP);
+    expect(getRequiredAdminReasonDescriptor("admin.unsuspendUser")).toBeNull();
   });
 
   it("does not require a reason for reversible actions", () => {
@@ -54,7 +64,7 @@ describe("audit writer", () => {
     });
   });
 
-  it("does not duplicate legacy mutations that already write audit rows", () => {
+  it("does not duplicate legacy mutations in the generic audit fallback", () => {
     expect(getAutomaticAdminAuditDescriptor("admin.deleteUser")).toBeNull();
     expect(getAutomaticAdminAuditDescriptor("admin.updatePlanLimits")).toBeNull();
   });
