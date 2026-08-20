@@ -4,6 +4,16 @@ import { getEffectiveLinkStatus } from "./linkStatus";
 const NOW = new Date("2026-08-20T08:00:00.000Z").getTime();
 
 describe("getEffectiveLinkStatus", () => {
+  it("returns quarantine before every other status", () => {
+    expect(getEffectiveLinkStatus({
+      quarantined: true,
+      destinationInvalid: true,
+      status: "paused",
+      activeFrom: NOW + 60_000,
+      expiresAt: NOW - 60_000,
+    }, NOW)).toBe("quarantine");
+  });
+
   it("returns broken before scheduled", () => {
     expect(getEffectiveLinkStatus({
       destinationInvalid: true,
