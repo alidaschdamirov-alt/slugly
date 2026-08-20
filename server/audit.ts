@@ -65,13 +65,14 @@ export interface AdminAuditDescriptor {
   reasonField?: string;
 }
 
-/**
- * Destructive admin actions must include a human-entered reason. This policy is
- * enforced before the resolver executes, so direct API/createCaller calls cannot
- * bypass the requirement. Legacy router-level audit rows remain for compatibility;
- * the central middleware also writes a reason-enriched row with request metadata.
- */
 const REQUIRED_ADMIN_REASON_AUDIT: Record<string, AdminAuditDescriptor> = {
+  "admin.disableLink": {
+    event: AUDIT_EVENTS.LINK_PAUSE,
+    targetType: "link",
+    targetId: input => typeof input.id === "number" ? input.id : null,
+    reasonField: "reason",
+    payload: () => ({ source: "central-reason-policy" }),
+  },
   "admin.suspendUser": {
     event: AUDIT_EVENTS.USER_SUSPEND,
     targetType: "user",
@@ -109,6 +110,20 @@ const REQUIRED_ADMIN_REASON_AUDIT: Record<string, AdminAuditDescriptor> = {
       source: "central-reason-policy",
       count: typeof result?.count === "number" ? result.count : undefined,
     }),
+  },
+  "admin.addBlockedDomain": {
+    event: AUDIT_EVENTS.DOMAIN_BLOCK,
+    targetType: "domain",
+    targetId: input => typeof input.hostname === "string" ? input.hostname : null,
+    reasonField: "reason",
+    payload: () => ({ source: "central-reason-policy" }),
+  },
+  "admin.removeBlockedDomain": {
+    event: AUDIT_EVENTS.DOMAIN_UNBLOCK,
+    targetType: "domain",
+    targetId: input => typeof input.id === "number" ? input.id : null,
+    reasonField: "reason",
+    payload: () => ({ source: "central-reason-policy" }),
   },
 };
 
