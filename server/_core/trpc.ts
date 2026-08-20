@@ -1,4 +1,5 @@
 import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
+import { AUDIT_EVENTS } from '@shared/audit-events';
 import { destinationUrlSchema } from '@shared/validation/destination-url';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
@@ -8,6 +9,8 @@ import {
   getAutomaticAdminAuditDescriptor,
   writeAuditEvent,
 } from "../audit";
+import { quarantineLink } from "../linkQuarantine";
+import { checkUrlSafety, type SafetyResult } from "../safeBrowsing";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -22,6 +25,11 @@ const DESTINATION_PROCEDURES = new Set([
   "link.shortenAnonymous",
 ]);
 
+interface DestinationCandidate {
+  url: string;
+  linkId?: number;
+}
+
 function assertDestinationUrl(value: unknown) {
   if (typeof value !== "string") return;
   const result = destinationUrlSchema.safeParse(value);
@@ -33,32 +41,40 @@ function assertDestinationUrl(value: unknown) {
   }
 }
 
-function validateDestinationInput(path: string, rawInput: unknown) {
-  if (!DESTINATION_PROCEDURES.has(path) || !rawInput || typeof rawInput !== "object") return;
+function getDestinationCandidates(path: string, rawInput: unknown): DestinationCandidate[] {
+  if (!DESTINATION_PROCEDURES.has(path) || !rawInput || typeof rawInput !== "object") return [];
   const input = rawInput as Record<string, unknown>;
 
   if (path === "link.shortenAnonymous") {
-    assertDestinationUrl(input.url);
-    return;
+    return typeof input.url === "string" ? [{ url: input.url }] : [];
   }
 
   if (path === "link.createBulk") {
     const items = Array.isArray(input.links) ? input.links : [];
-    for (const item of items) {
-      if (item && typeof item === "object") {
-        assertDestinationUrl((item as Record<string, unknown>).destinationUrl);
-      }
-    }
-    return;
+    return items.flatMap(item => {
+      if (!item || typeof item !== "object") return [];
+      const destinationUrl = (item as Record<string, unknown>).destinationUrl;
+      return typeof destinationUrl === "string" ? [{ url: destinationUrl }] : [];
+    });
   }
 
-  if (path === "link.create") {
-    assertDestinationUrl(input.destinationUrl);
-    return;
+  if (path === "link.create" && typeof input.destinationUrl === "string") {
+    return [{ url: input.destinationUrl }];
   }
 
-  if (path === "link.update" && input.destinationUrl !== undefined) {
-    assertDestinationUrl(input.destinationUrl);
+  if (path === "link.update" && typeof input.destinationUrl === "string") {
+    return [{
+      url: input.destinationUrl,
+      linkId: typeof input.id === "number" ? input.id : undefined,
+    }];
+  }
+
+  return [];
+}
+
+function validateDestinationInput(path: string, rawInput: unknown) {
+  for (const candidate of getDestinationCandidates(path, rawInput)) {
+    assertDestinationUrl(candidate.url);
   }
 }
 
@@ -70,7 +86,110 @@ const validateDestinationUrls = t.middleware(async opts => {
   return opts.next();
 });
 
-const baseProcedure = t.procedure.use(validateDestinationUrls);
+async function writeSafetyVerdictAudit(input: {
+  ctx: TrpcContext;
+  path: string;
+  candidate: DestinationCandidate;
+  safety: SafetyResult;
+  event: typeof AUDIT_EVENTS.SAFETY_DESTINATION_REJECTED | typeof AUDIT_EVENTS.SAFETY_CHECK_UNKNOWN;
+}) {
+  const { ctx, path, candidate, safety, event } = input;
+  const request = getAuditRequestContext(ctx.req);
+  await writeAuditEvent({
+    event,
+    actorId: ctx.user?.id ?? 0,
+    actorName: ctx.user?.name || ctx.user?.email || (ctx.user ? "user" : "anonymous"),
+    targetType: candidate.linkId ? "link" : "system",
+    targetId: candidate.linkId ?? null,
+    payload: {
+      path,
+      destinationUrl: candidate.url,
+      verdict: safety.verdict,
+      threatTypes: safety.threatTypes,
+      reason: safety.reason,
+    },
+    ...request,
+  });
+}
+
+async function quarantineRejectedDestinationUpdate(
+  ctx: TrpcContext,
+  candidate: DestinationCandidate,
+  safety: SafetyResult
+) {
+  if (!ctx.user || !candidate.linkId) return;
+
+  const { getLinkById } = await import("../db");
+  const link = await getLinkById(candidate.linkId);
+  if (!link || link.userId !== ctx.user.id) return;
+
+  const reason = safety.reason || "Destination was flagged as unsafe";
+  await quarantineLink({
+    linkId: link.id,
+    shortCode: link.shortCode,
+    reason,
+    threatTypes: safety.threatTypes,
+    source: "destination-update",
+    actorId: ctx.user.id,
+    actorName: ctx.user.name || ctx.user.email || "user",
+  });
+
+  const { invalidateLinkCache } = await import("../redirect");
+  invalidateLinkCache(link.shortCode);
+
+  const { notifyOwner } = await import("./notification");
+  await notifyOwner({
+    title: "Unsafe destination update blocked",
+    content: `Link #${link.id} /r/${link.shortCode} was quarantined after a destination update was flagged by Safe Browsing. Reason: ${reason}`,
+  }).catch(() => false);
+}
+
+const enforceDestinationSafety = t.middleware(async opts => {
+  if (!DESTINATION_PROCEDURES.has(opts.path)) return opts.next();
+
+  const rawInput = await opts.getRawInput();
+  const candidates = getDestinationCandidates(opts.path, rawInput);
+
+  for (const candidate of candidates) {
+    const safety = await checkUrlSafety(candidate.url);
+
+    if (safety.verdict === "unknown") {
+      await writeSafetyVerdictAudit({
+        ctx: opts.ctx,
+        path: opts.path,
+        candidate,
+        safety,
+        event: AUDIT_EVENTS.SAFETY_CHECK_UNKNOWN,
+      }).catch(error => console.error("[Audit] Failed to record unknown Safe Browsing verdict:", error));
+      continue;
+    }
+
+    if (safety.verdict === "malicious") {
+      await writeSafetyVerdictAudit({
+        ctx: opts.ctx,
+        path: opts.path,
+        candidate,
+        safety,
+        event: AUDIT_EVENTS.SAFETY_DESTINATION_REJECTED,
+      }).catch(error => console.error("[Audit] Failed to record rejected destination:", error));
+
+      if (opts.path === "link.update") {
+        await quarantineRejectedDestinationUpdate(opts.ctx, candidate, safety);
+      }
+
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "This destination was flagged as unsafe and cannot be used.",
+      });
+    }
+  }
+
+  return opts.next();
+});
+
+const baseProcedure = t.procedure
+  .use(validateDestinationUrls)
+  .use(enforceDestinationSafety);
 export const publicProcedure = baseProcedure;
 
 const requireUser = t.middleware(async opts => {
