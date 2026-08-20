@@ -25,7 +25,7 @@ export type BackgroundJobStatus = {
   label: string;
   lastRunAt: number | null;
   durationMs: number | null;
-  status: "success" | "failed" | "never";
+  status: "success" | "failed" | "never" | "stale";
   processed: number | null;
   detail?: string | null;
 };
@@ -45,6 +45,7 @@ const METRIC_WINDOW_MS = 15 * 60 * 1000;
 const MAX_SAMPLES = 4000;
 const INCIDENT_KEY = "system_health_incidents_v1";
 const JOB_PREFIX = "system_health_job_";
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const samples: Record<HttpKind, HttpSample[]> = {
   redirect: [],
@@ -60,11 +61,21 @@ const JOB_LABELS: Record<HealthJobName, string> = {
   cleanup_rate_limits: "Rate-limit cleanup",
 };
 
-const SCHEDULED_PATH_TO_JOB: Record<string, HealthJobName> = {
+const JOB_STALE_AFTER_MS: Record<HealthJobName, number> = {
+  weekly_digest: 8 * DAY_MS,
+  anonymous_link_expiry: 2 * DAY_MS,
+  cleanup_expired: 2 * DAY_MS,
+  safe_browsing_rescan: 2 * DAY_MS,
+  backup: 2 * DAY_MS,
+  cleanup_rate_limits: 2 * DAY_MS,
+};
+
+const REQUEST_PATH_TO_JOB: Record<string, HealthJobName> = {
   "/api/scheduled/backup": "backup",
   "/api/scheduled/notify-expiring-links": "anonymous_link_expiry",
   "/api/scheduled/cleanup-rate-limits": "cleanup_rate_limits",
   "/api/scheduled/safe-browsing-rescan": "safe_browsing_rescan",
+  "/api/trpc/admin.cleanupExpiredAnonymous": "cleanup_expired",
 };
 
 function trimSamples(kind: HttpKind) {
@@ -120,14 +131,27 @@ export function systemHealthMetricsMiddleware(req: Request, res: Response, next:
   return next();
 }
 
-function extractProcessed(payload: unknown): number | null {
-  if (!payload || typeof payload !== "object") return null;
-  const body = payload as Record<string, unknown>;
-  for (const key of ["processed", "scanned", "notified", "deleted", "count"]) {
-    const value = body[key];
-    if (typeof value === "number" && Number.isFinite(value)) return value;
+function findNumericKey(value: unknown, keys: readonly string[], depth = 0): number | null {
+  if (depth > 5 || !value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const candidate = record[key];
+    if (typeof candidate === "number" && Number.isFinite(candidate)) return candidate;
   }
-  const recordCount = body.recordCount;
+  for (const child of Object.values(record)) {
+    if (child && typeof child === "object") {
+      const found = findNumericKey(child, keys, depth + 1);
+      if (found !== null) return found;
+    }
+  }
+  return null;
+}
+
+function extractProcessed(payload: unknown): number | null {
+  const direct = findNumericKey(payload, ["processed", "scanned", "notified", "deleted", "count"]);
+  if (direct !== null) return direct;
+  if (!payload || typeof payload !== "object") return null;
+  const recordCount = (payload as Record<string, unknown>).recordCount;
   if (recordCount && typeof recordCount === "object") {
     return Object.values(recordCount as Record<string, unknown>)
       .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
@@ -137,7 +161,7 @@ function extractProcessed(payload: unknown): number | null {
 }
 
 export function backgroundJobTelemetryMiddleware(req: Request, res: Response, next: NextFunction) {
-  const job = SCHEDULED_PATH_TO_JOB[req.path];
+  const job = REQUEST_PATH_TO_JOB[req.path];
   if (!job || req.method !== "POST") return next();
 
   const startedAt = Date.now();
@@ -232,6 +256,7 @@ export async function recordBackgroundJobResult(
 
   if (result.success) {
     await resolveIncident(`job:${name}`);
+    await resolveIncident(`job-stale:${name}`);
   } else {
     await openIncident({
       key: `job:${name}`,
@@ -245,23 +270,31 @@ export async function recordBackgroundJobResult(
 
 async function getJobStatus(name: HealthJobName): Promise<BackgroundJobStatus> {
   const raw = await getSiteSetting(`${JOB_PREFIX}${name}`);
+  let value: BackgroundJobStatus | null = null;
   if (raw) {
     try {
-      const value = JSON.parse(raw) as BackgroundJobStatus;
-      if (value?.name === name) return value;
+      const parsed = JSON.parse(raw) as BackgroundJobStatus;
+      if (parsed?.name === name) value = parsed;
     } catch {
-      // fall through to never
+      value = null;
     }
   }
-  return {
-    name,
-    label: JOB_LABELS[name],
-    lastRunAt: null,
-    durationMs: null,
-    status: "never",
-    processed: null,
-    detail: null,
-  };
+  if (!value) {
+    return {
+      name,
+      label: JOB_LABELS[name],
+      lastRunAt: null,
+      durationMs: null,
+      status: "never",
+      processed: null,
+      detail: "No successful or failed execution has been recorded yet.",
+    };
+  }
+
+  if (value.status === "success" && value.lastRunAt && Date.now() - value.lastRunAt > JOB_STALE_AFTER_MS[name]) {
+    return { ...value, status: "stale", detail: "The job has not run within its expected interval." };
+  }
+  return value;
 }
 
 async function dependencyStates() {
@@ -276,8 +309,6 @@ async function dependencyStates() {
     dependencies.push({ name: "Database", state: "down", detail: "Database health query failed" });
   }
 
-  // The System Health endpoint itself is protected by Clerk, so reaching this
-  // code with a privileged actor is a live Clerk authentication check.
   dependencies.push({ name: "Clerk", state: "ok", detail: "Authenticated privileged request" });
 
   const resendConfigured = !!process.env.RESEND_API_KEY;
@@ -313,7 +344,6 @@ export async function getSystemHealthSnapshot() {
   const api = summarize("api");
   const jobs = await Promise.all((Object.keys(JOB_LABELS) as HealthJobName[]).map(getJobStatus));
   const dependencies = await dependencyStates();
-  const incidents = await readIncidents();
 
   if ((redirect.latencyMs.p95 ?? 0) >= 1000 && redirect.requests >= 20) {
     await openIncident({
@@ -337,10 +367,24 @@ export async function getSystemHealthSnapshot() {
     await resolveIncident("api:5xx");
   }
 
+  for (const job of jobs) {
+    if (job.status === "stale") {
+      await openIncident({
+        key: `job-stale:${job.name}`,
+        title: `${job.label} is overdue`,
+        detail: job.detail || "The job did not run within its expected interval.",
+        severity: "warning",
+      });
+    } else if (job.status === "success") {
+      await resolveIncident(`job-stale:${job.name}`);
+    }
+  }
+
   const refreshedIncidents = await readIncidents();
   const activeIncidents = refreshedIncidents.filter(item => !item.resolvedAt);
   const criticalDependency = dependencies.some(item => item.state === "down");
   const failedJob = jobs.some(job => job.status === "failed");
+  const incompleteJob = jobs.some(job => job.status === "never" || job.status === "stale");
 
   return {
     generatedAt: Date.now(),
@@ -348,7 +392,7 @@ export async function getSystemHealthSnapshot() {
     uptimeSeconds: Math.floor(process.uptime()),
     overall: criticalDependency || failedJob || activeIncidents.some(item => item.severity === "critical")
       ? "down"
-      : activeIncidents.length > 0 || dependencies.some(item => item.state === "degraded")
+      : incompleteJob || activeIncidents.length > 0 || dependencies.some(item => item.state === "degraded")
         ? "degraded"
         : "ok",
     http: { redirect, api },
