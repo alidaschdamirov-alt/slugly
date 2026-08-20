@@ -22,7 +22,7 @@ import TagAnalytics from "./pages/TagAnalytics";
 import QrCodesPage from "./pages/QrCodesPage";
 import ReportPage from "./pages/ReportPage";
 import AuthPage from "./pages/AuthPage";
-import AdminPanel from "./pages/AdminPanel";
+import AdminPanelWithSecurity from "./pages/AdminPanelWithSecurity";
 import PrivacySettings from "./pages/PrivacySettings";
 import { TermsPage, PrivacyPage, AupPage } from "./pages/LegalPages";
 import Team from "./pages/Team";
@@ -64,7 +64,7 @@ function AppRoutes() {
       <Route path="/branding" component={WhiteLabelReport} />
       <Route path="/export-report" component={ExportReport} />
       <Route path="/invite/:token" component={InviteAccept} />
-      <Route path="/admin" component={AdminPanel} />
+      <Route path="/admin" component={AdminPanelWithSecurity} />
       <Route path="/privacy-settings" component={PrivacySettings} />
       <Route path="/terms" component={TermsPage} />
       <Route path="/privacy" component={PrivacyPage} />
