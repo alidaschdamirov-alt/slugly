@@ -13,8 +13,8 @@ export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
   res: CreateExpressContextOptions["res"];
   user: User | null;
-  actorUser: User | null;
-  impersonation: ImpersonationSession | null;
+  actorUser?: User | null;
+  impersonation?: ImpersonationSession | null;
   workspace: Workspace | null;
   membership: WorkspaceMember | null;
 };
@@ -43,7 +43,6 @@ export async function createContext(
   }
 
   if (user) {
-    // Never claim anonymous links while support/admin is viewing another account.
     if (!impersonation) {
       const anonymousCodes = getAnonymousLinkCodes(opts.req.headers.cookie);
       if (anonymousCodes.length > 0) {
