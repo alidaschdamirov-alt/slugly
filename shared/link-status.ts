@@ -1,6 +1,6 @@
 import { normalizeDestinationUrl } from "./validation/destination-url";
 
-export type LinkStatus = "active" | "paused" | "scheduled" | "expired" | "broken";
+export type LinkStatus = "active" | "paused" | "scheduled" | "expired" | "broken" | "quarantine";
 
 export interface LinkStatusInput {
   status?: "active" | "paused" | string | null;
@@ -8,6 +8,7 @@ export interface LinkStatusInput {
   expiresAt?: number | string | Date | null;
   destinationUrl?: string | null;
   destinationInvalid?: boolean | number | null;
+  quarantined?: boolean | number | null;
 }
 
 function toTimestamp(value: number | string | Date | null | undefined): number | null {
@@ -24,6 +25,7 @@ export function isBrokenDestination(link: LinkStatusInput): boolean {
 }
 
 export function getLinkStatus(link: LinkStatusInput, now = Date.now()): LinkStatus {
+  if (link.quarantined === true || link.quarantined === 1) return "quarantine";
   if (isBrokenDestination(link)) return "broken";
   if (link.status === "paused") return "paused";
 
@@ -37,6 +39,7 @@ export function getLinkStatus(link: LinkStatusInput, now = Date.now()): LinkStat
 
 export function getLinkStatusLabel(status: LinkStatus): string {
   switch (status) {
+    case "quarantine": return "Security quarantine";
     case "broken": return "Broken destination";
     case "paused": return "Paused";
     case "scheduled": return "Scheduled";
@@ -47,6 +50,7 @@ export function getLinkStatusLabel(status: LinkStatus): string {
 
 export function getLinkStatusClass(status: LinkStatus): string {
   switch (status) {
+    case "quarantine": return "bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-300";
     case "broken": return "bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300";
     case "paused": return "bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400";
     case "scheduled": return "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
