@@ -7,6 +7,8 @@ import type { TrpcContext } from "./context";
 import {
   getAuditRequestContext,
   getAutomaticAdminAuditDescriptor,
+  getRequiredAdminReasonDescriptor,
+  requireAuditReason,
   writeAuditEvent,
 } from "../audit";
 import { isDestinationBlockedByPolicy } from "../blocklist";
@@ -194,8 +196,18 @@ export const wsAdminProcedure = baseProcedure.use(requireWsAdmin);
 export const adminProcedure = baseProcedure.use(t.middleware(async opts => {
   const { ctx, next } = opts;
   if (!ctx.user || ctx.user.role !== 'admin') throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+
   const rawInput = await opts.getRawInput().catch(() => undefined);
   const input = rawInput && typeof rawInput === "object" ? rawInput as Record<string, unknown> : {};
+  const requiredReasonDescriptor = getRequiredAdminReasonDescriptor(opts.path);
+  const requiredReasonField = requiredReasonDescriptor?.reasonField || "reason";
+  const requiredReason = requiredReasonDescriptor
+    ? requireAuditReason(
+        requiredReasonDescriptor.event,
+        typeof input[requiredReasonField] === "string" ? String(input[requiredReasonField]) : undefined
+      )
+    : undefined;
+
   const result = await next({ ctx: { ...ctx, user: ctx.user } });
   const procedureType = (opts as { type?: string }).type;
   if (procedureType === "mutation") {
@@ -203,9 +215,24 @@ export const adminProcedure = baseProcedure.use(t.middleware(async opts => {
       const { invalidateBlocklistCache } = await import("../blocklist");
       invalidateBlocklistCache();
     }
+
+    const request = getAuditRequestContext(ctx.req);
+
+    if (requiredReasonDescriptor) {
+      await writeAuditEvent({
+        event: requiredReasonDescriptor.event,
+        actorId: ctx.user.id,
+        actorName: ctx.user.name || ctx.user.email || "admin",
+        targetType: requiredReasonDescriptor.targetType,
+        targetId: requiredReasonDescriptor.targetId?.(input, result) ?? null,
+        payload: requiredReasonDescriptor.payload?.(input, result),
+        reason: requiredReason,
+        ...request,
+      }).catch(error => console.error(`[Audit] Failed to record reason for ${opts.path}:`, error));
+    }
+
     const descriptor = getAutomaticAdminAuditDescriptor(opts.path);
     if (descriptor) {
-      const request = getAuditRequestContext(ctx.req);
       const reason = descriptor.reasonField && typeof input[descriptor.reasonField] === "string" ? String(input[descriptor.reasonField]) : undefined;
       try {
         await writeAuditEvent({
