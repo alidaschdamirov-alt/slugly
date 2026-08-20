@@ -24,6 +24,8 @@ export interface ImpersonationSession {
   expiresAt: number;
   tokenHash: string;
   revokedAt: number | null;
+  actorIp?: string | null;
+  userAgent?: string | null;
 }
 
 export interface ResolvedImpersonation {
@@ -95,6 +97,7 @@ export async function startImpersonation(input: {
   const id = randomUUID();
   const token = randomBytes(32).toString("hex");
   const now = Date.now();
+  const requestContext = getAuditRequestContext(input.req);
   const session: ImpersonationSession = {
     id,
     actorId: input.actor.id,
@@ -108,6 +111,8 @@ export async function startImpersonation(input: {
     expiresAt: now + IMPERSONATION_DURATION_MS,
     tokenHash: hashToken(token),
     revokedAt: null,
+    actorIp: requestContext.ip || null,
+    userAgent: requestContext.userAgent || null,
   };
 
   await setSiteSetting(sessionKey(id), JSON.stringify(session));
@@ -134,7 +139,7 @@ export async function startImpersonation(input: {
       readOnly: true,
       expiresAt: session.expiresAt,
     },
-    ...getAuditRequestContext(input.req),
+    ...requestContext,
   });
 
   return publicSession(session);
@@ -153,6 +158,8 @@ function publicSession(session: ImpersonationSession) {
     createdAt: session.createdAt,
     expiresAt: session.expiresAt,
     revokedAt: session.revokedAt,
+    actorIp: session.actorIp || null,
+    userAgent: session.userAgent || null,
   };
 }
 
