@@ -1,0 +1,50 @@
+export const AUDIT_EVENTS = {
+  USER_ROLE_CHANGE: "user.role_change",
+  BILLING_CHANGE_PLAN: "billing.change_plan",
+  SETTINGS_UPDATE: "settings.update",
+  EMAIL_CONFIG_UPDATED: "email.config_updated",
+
+  USER_SUSPEND: "user.suspend",
+  USER_UNSUSPEND: "user.unsuspend",
+  USER_DELETE: "user.delete",
+  USER_IMPERSONATE: "user.impersonate",
+  LINK_PAUSE: "link.pause",
+  LINK_RESUME: "link.resume",
+  LINK_DELETE: "link.delete",
+  LINK_QUARANTINE: "link.quarantine",
+  LINK_BULK_CLEANUP: "link.bulk_cleanup",
+  DOMAIN_BLOCK: "domain.block",
+  DOMAIN_UNBLOCK: "domain.unblock",
+  REPORT_RESOLVE: "report.resolve",
+  REPORT_REJECT: "report.reject",
+  NOTIFICATION_SEND: "notification.send",
+  BACKUP_EXPORT: "backup.export",
+  PLAN_LIMITS_UPDATE: "plan.limits_update",
+} as const;
+
+export type AuditEvent = typeof AUDIT_EVENTS[keyof typeof AUDIT_EVENTS];
+export type AuditTargetType = "user" | "link" | "workspace" | "domain" | "report" | "system";
+
+export interface AuditEntry {
+  event: AuditEvent;
+  actorId: number;
+  actorName?: string | null;
+  targetType: AuditTargetType;
+  targetId: string | number | null;
+  payload?: Record<string, unknown>;
+  reason?: string;
+  ip?: string;
+  userAgent?: string;
+}
+
+export const AUDIT_REASON_REQUIRED = new Set<AuditEvent>([
+  AUDIT_EVENTS.USER_SUSPEND,
+  AUDIT_EVENTS.USER_DELETE,
+  AUDIT_EVENTS.LINK_DELETE,
+  AUDIT_EVENTS.LINK_BULK_CLEANUP,
+  AUDIT_EVENTS.USER_IMPERSONATE,
+]);
+
+export function auditEventRequiresReason(event: AuditEvent): boolean {
+  return AUDIT_REASON_REQUIRED.has(event);
+}
