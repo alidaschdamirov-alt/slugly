@@ -66,11 +66,56 @@ export interface AdminAuditDescriptor {
 }
 
 /**
- * Legacy admin mutations already write their own audit record inside the router
- * or service layer. The central middleware skips these to avoid duplicate rows.
- * Any new admin mutation that is not listed here gets a generic admin.mutation
- * record automatically, so an unaudited admin write cannot be added silently.
+ * Destructive admin actions must include a human-entered reason. This policy is
+ * enforced before the resolver executes, so direct API/createCaller calls cannot
+ * bypass the requirement. Legacy router-level audit rows remain for compatibility;
+ * the central middleware also writes a reason-enriched row with request metadata.
  */
+const REQUIRED_ADMIN_REASON_AUDIT: Record<string, AdminAuditDescriptor> = {
+  "admin.suspendUser": {
+    event: AUDIT_EVENTS.USER_SUSPEND,
+    targetType: "user",
+    targetId: input => typeof input.id === "number" ? input.id : null,
+    reasonField: "reason",
+    payload: () => ({ source: "central-reason-policy" }),
+  },
+  "admin.banUser": {
+    event: AUDIT_EVENTS.USER_SUSPEND,
+    targetType: "user",
+    targetId: input => typeof input.id === "number" ? input.id : null,
+    reasonField: "reason",
+    payload: () => ({ source: "central-reason-policy", action: "ban" }),
+  },
+  "admin.deleteUser": {
+    event: AUDIT_EVENTS.USER_DELETE,
+    targetType: "user",
+    targetId: input => typeof input.id === "number" ? input.id : null,
+    reasonField: "reason",
+    payload: () => ({ source: "central-reason-policy" }),
+  },
+  "admin.deleteLink": {
+    event: AUDIT_EVENTS.LINK_DELETE,
+    targetType: "link",
+    targetId: input => typeof input.id === "number" ? input.id : null,
+    reasonField: "reason",
+    payload: () => ({ source: "central-reason-policy" }),
+  },
+  "admin.cleanupExpiredAnonymous": {
+    event: AUDIT_EVENTS.LINK_BULK_CLEANUP,
+    targetType: "system",
+    targetId: () => "expired-anonymous-links",
+    reasonField: "reason",
+    payload: (_input, result: any) => ({
+      source: "central-reason-policy",
+      count: typeof result?.count === "number" ? result.count : undefined,
+    }),
+  },
+};
+
+export function getRequiredAdminReasonDescriptor(path: string): AdminAuditDescriptor | null {
+  return REQUIRED_ADMIN_REASON_AUDIT[path] || null;
+}
+
 export const MANUALLY_AUDITED_ADMIN_PATHS = new Set([
   "admin.updateReport",
   "admin.disableLink",
