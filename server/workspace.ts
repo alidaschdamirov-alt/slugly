@@ -256,6 +256,38 @@ export async function countWorkspaceDomains(workspaceId: number): Promise<number
   return result?.count ?? 0;
 }
 
+export async function adminListWorkspaces(input: { search?: string; plan?: PlanName } = {}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const all = await db.select().from(workspaces).orderBy(desc(workspaces.createdAt));
+  const search = input.search?.trim().toLowerCase();
+  const filtered = all.filter(workspace => {
+    if (input.plan && workspace.plan !== input.plan) return false;
+    if (search && !workspace.name.toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  return Promise.all(
+    filtered.map(async workspace => {
+      const [memberCount, projectCount, linkCount, domainCount] = await Promise.all([
+        countWorkspaceMembers(workspace.id),
+        countWorkspaceProjects(workspace.id),
+        countWorkspaceLinks(workspace.id),
+        countWorkspaceDomains(workspace.id),
+      ]);
+
+      return {
+        ...workspace,
+        memberCount,
+        projectCount,
+        linkCount,
+        domainCount,
+      };
+    })
+  );
+}
+
 // ============ INVITATIONS ============
 
 export async function createInvitation(data: { workspaceId: number; email: string; role: "admin" | "editor" | "viewer"; invitedBy: number; token: string; expiresAt: number }): Promise<{ id: number }> {
