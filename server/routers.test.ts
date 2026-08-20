@@ -51,6 +51,7 @@ vi.mock("./workspace", () => ({
   countWorkspaceDomains: vi.fn().mockResolvedValue(0),
   countWorkspaceMembers: vi.fn().mockResolvedValue(1),
   checkLimit: vi.fn().mockReturnValue({ allowed: true, limit: -1, current: 0 }),
+  adminListWorkspaces: vi.fn().mockResolvedValue([]),
 }));
 
 // Mock safeBrowsing
@@ -101,7 +102,6 @@ function createMockContext(overrides?: Partial<{ plan: string; role: string; wsR
 describe("project router", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: free plan, allow project creation
     mockedWs.getPlanConfig.mockResolvedValue({
       limits: { projects: 1, links: 5, domains: 0, analyticsRetentionDays: 7, seats: 1 },
       features: { utmTemplates: false, campaignDashboard: "none", csvExport: false, bulkOps: false, geoTarget: false, abTest: false, deepLinks: false, pixels: false, roles: false, whiteLabelReports: false },
@@ -112,51 +112,35 @@ describe("project router", () => {
 
   it("creates a project for free user with 0 projects", async () => {
     mockedDb.createProject.mockResolvedValue({ id: 1 });
-
-    const ctx = createMockContext();
-    const caller = appRouter.createCaller(ctx);
+    const caller = appRouter.createCaller(createMockContext());
     const result = await caller.project.create({ name: "My Campaign", color: "#ff0000" });
     expect(result).toEqual({ id: 1 });
-    expect(mockedDb.createProject).toHaveBeenCalledWith(expect.objectContaining({
-      userId: 1,
-      name: "My Campaign",
-      color: "#ff0000",
-    }));
+    expect(mockedDb.createProject).toHaveBeenCalledWith(expect.objectContaining({ userId: 1, name: "My Campaign", color: "#ff0000" }));
   });
 
   it("rejects project creation when plan limit reached", async () => {
     mockedWs.checkLimit.mockReturnValue({ allowed: false, limit: 1, current: 1 });
-
-    const ctx = createMockContext();
-    const caller = appRouter.createCaller(ctx);
+    const caller = appRouter.createCaller(createMockContext());
     await expect(caller.project.create({ name: "Second Project" })).rejects.toThrow("LIMIT_REACHED");
   });
 
   it("allows pro user to create projects within limit", async () => {
     mockedWs.checkLimit.mockReturnValue({ allowed: true, limit: -1, current: 5 });
     mockedDb.createProject.mockResolvedValue({ id: 6 });
-
-    const ctx = createMockContext({ plan: "pro" });
-    const caller = appRouter.createCaller(ctx);
-    const result = await caller.project.create({ name: "Pro Project" });
-    expect(result).toEqual({ id: 6 });
+    const caller = appRouter.createCaller(createMockContext({ plan: "pro" }));
+    expect(await caller.project.create({ name: "Pro Project" })).toEqual({ id: 6 });
   });
 
   it("updates a project owned by user", async () => {
     mockedDb.getProjectById.mockResolvedValue({ id: 1, userId: 1, name: "Old", description: null, color: "#000000", createdAt: new Date(), updatedAt: new Date() });
-
-    const ctx = createMockContext();
-    const caller = appRouter.createCaller(ctx);
-    const result = await caller.project.update({ id: 1, name: "New Name" });
-    expect(result).toEqual({ success: true });
+    const caller = appRouter.createCaller(createMockContext());
+    expect(await caller.project.update({ id: 1, name: "New Name" })).toEqual({ success: true });
     expect(mockedDb.updateProject).toHaveBeenCalledWith(1, { name: "New Name" });
   });
 
   it("rejects update for project not owned by user", async () => {
     mockedDb.getProjectById.mockResolvedValue({ id: 1, userId: 99, name: "Other", description: null, color: "#000000", createdAt: new Date(), updatedAt: new Date() });
-
-    const ctx = createMockContext();
-    const caller = appRouter.createCaller(ctx);
+    const caller = appRouter.createCaller(createMockContext());
     await expect(caller.project.update({ id: 1, name: "Hack" })).rejects.toThrow("Project not found");
   });
 });
@@ -175,94 +159,114 @@ describe("link router", () => {
   it("creates a link with custom short code", async () => {
     mockedDb.getLinkByShortCode.mockResolvedValue(null);
     mockedDb.createLink.mockResolvedValue({ id: 1 });
-
-    const ctx = createMockContext();
-    const caller = appRouter.createCaller(ctx);
-    const result = await caller.link.create({
-      destinationUrl: "https://example.com",
-      customCode: "my-link",
-      title: "Test Link",
-    });
+    const caller = appRouter.createCaller(createMockContext());
+    const result = await caller.link.create({ destinationUrl: "https://example.com", customCode: "my-link", title: "Test Link" });
     expect(result.shortCode).toBe("my-link");
-    expect(mockedDb.createLink).toHaveBeenCalledWith(expect.objectContaining({
-      shortCode: "my-link",
-      destinationUrl: "https://example.com",
-      title: "Test Link",
-    }));
+    expect(mockedDb.createLink).toHaveBeenCalledWith(expect.objectContaining({ shortCode: "my-link", destinationUrl: "https://example.com", title: "Test Link" }));
   });
 
   it("rejects link creation when plan limit reached", async () => {
     mockedWs.checkLimit.mockReturnValue({ allowed: false, limit: 5, current: 5 });
-
-    const ctx = createMockContext();
-    const caller = appRouter.createCaller(ctx);
+    const caller = appRouter.createCaller(createMockContext());
     await expect(caller.link.create({ destinationUrl: "https://example.com" })).rejects.toThrow("LIMIT_REACHED");
   });
 
   it("rejects duplicate custom short code", async () => {
     mockedDb.getLinkByShortCode.mockResolvedValue({ id: 99, shortCode: "taken", userId: 2 } as any);
-
-    const ctx = createMockContext();
-    const caller = appRouter.createCaller(ctx);
+    const caller = appRouter.createCaller(createMockContext());
     await expect(caller.link.create({ destinationUrl: "https://example.com", customCode: "taken" })).rejects.toThrow("already taken");
   });
 
   it("creates bulk links", async () => {
     mockedDb.createLinks.mockResolvedValue([{ id: 1 }, { id: 2 }] as any);
-
-    const ctx = createMockContext();
-    const caller = appRouter.createCaller(ctx);
-    const result = await caller.link.createBulk({
-      links: [
-        { destinationUrl: "https://a.com" },
-        { destinationUrl: "https://b.com" },
-      ],
-    });
+    const caller = appRouter.createCaller(createMockContext());
+    const result = await caller.link.createBulk({ links: [{ destinationUrl: "https://a.com" }, { destinationUrl: "https://b.com" }] });
     expect(result).toHaveLength(2);
   });
 
   it("rejects bulk creation exceeding plan limit", async () => {
     mockedWs.checkLimit.mockReturnValue({ allowed: false, limit: 5, current: 24 });
+    const caller = appRouter.createCaller(createMockContext());
+    await expect(caller.link.createBulk({ links: [{ destinationUrl: "https://a.com" }, { destinationUrl: "https://b.com" }] })).rejects.toThrow("LIMIT_REACHED");
+  });
 
-    const ctx = createMockContext();
-    const caller = appRouter.createCaller(ctx);
-    await expect(caller.link.createBulk({
-      links: [
-        { destinationUrl: "https://a.com" },
-        { destinationUrl: "https://b.com" },
-      ],
-    })).rejects.toThrow("LIMIT_REACHED");
+  it.each(["test", "тест", "javascript:alert(1)", "http://localhost:3000"])(
+    "rejects invalid destination on link.create: %s",
+    async destinationUrl => {
+      const caller = appRouter.createCaller(createMockContext());
+      await expect(caller.link.create({ destinationUrl })).rejects.toThrow("valid URL");
+      expect(mockedDb.createLink).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(["test", "тест", "javascript:alert(1)", "http://localhost:3000"])(
+    "rejects invalid destination on link.update: %s",
+    async destinationUrl => {
+      const caller = appRouter.createCaller(createMockContext());
+      await expect(caller.link.update({ id: 1, destinationUrl })).rejects.toThrow("valid URL");
+      expect(mockedDb.updateLink).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(["test", "тест", "javascript:alert(1)", "http://localhost:3000"])(
+    "rejects invalid destination on link.createBulk: %s",
+    async destinationUrl => {
+      const caller = appRouter.createCaller(createMockContext());
+      await expect(caller.link.createBulk({ links: [{ destinationUrl }] })).rejects.toThrow("valid URL");
+      expect(mockedDb.createLinks).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(["test", "тест", "javascript:alert(1)", "http://localhost:3000"])(
+    "rejects invalid destination on anonymous shorten: %s",
+    async url => {
+      const caller = appRouter.createCaller(createMockContext());
+      await expect(caller.link.shortenAnonymous({ url })).rejects.toThrow("valid URL");
+      expect(mockedDb.createLink).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe("admin router", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedWs.adminListWorkspaces.mockResolvedValue([
+      { id: 1, name: "Test Workspace", plan: "free", memberCount: 1, projectCount: 0, linkCount: 0, domainCount: 0 } as any,
+    ]);
+  });
+
+  it("lists workspaces for an admin without calling an undefined helper", async () => {
+    const caller = appRouter.createCaller(createMockContext({ role: "admin" }));
+    const result = await caller.admin.listWorkspaces({});
+    expect(result).toHaveLength(1);
+    expect(mockedWs.adminListWorkspaces).toHaveBeenCalledWith({});
+  });
+
+  it("blocks a normal user from admin procedures", async () => {
+    const caller = appRouter.createCaller(createMockContext({ role: "user" }));
+    await expect(caller.admin.listWorkspaces({})).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
 
 describe("domain router", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+  beforeEach(() => vi.clearAllMocks());
 
   it("rejects domain creation when plan limit is 0", async () => {
     mockedWs.checkLimit.mockReturnValue({ allowed: false, limit: 0, current: 0 });
-
-    const ctx = createMockContext({ plan: "free" });
-    const caller = appRouter.createCaller(ctx);
+    const caller = appRouter.createCaller(createMockContext({ plan: "free" }));
     await expect(caller.domain.create({ hostname: "go.brand.com" })).rejects.toThrow("LIMIT_REACHED");
   });
 
   it("allows pro user to create a domain", async () => {
     mockedWs.checkLimit.mockReturnValue({ allowed: true, limit: 1, current: 0 });
     mockedDb.createDomain.mockResolvedValue({ id: 1 });
-
-    const ctx = createMockContext({ plan: "pro" });
-    const caller = appRouter.createCaller(ctx);
-    const result = await caller.domain.create({ hostname: "go.brand.com" });
-    expect(result).toEqual({ id: 1 });
+    const caller = appRouter.createCaller(createMockContext({ plan: "pro" }));
+    expect(await caller.domain.create({ hostname: "go.brand.com" })).toEqual({ id: 1 });
   });
 
   it("rejects second domain for pro user", async () => {
     mockedWs.checkLimit.mockReturnValue({ allowed: false, limit: 1, current: 1 });
-
-    const ctx = createMockContext({ plan: "pro" });
-    const caller = appRouter.createCaller(ctx);
+    const caller = appRouter.createCaller(createMockContext({ plan: "pro" }));
     await expect(caller.domain.create({ hostname: "another.com" })).rejects.toThrow("LIMIT_REACHED");
   });
 });
@@ -281,8 +285,7 @@ describe("billing router", () => {
   });
 
   it("returns workspace plan status", async () => {
-    const ctx = createMockContext({ plan: "pro" });
-    const caller = appRouter.createCaller(ctx);
+    const caller = appRouter.createCaller(createMockContext({ plan: "pro" }));
     const result = await caller.billing.status();
     expect(result.plan).toBe("pro");
     expect(result.usage).toBeDefined();
