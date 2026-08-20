@@ -1,6 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Loader2 } from "lucide-react";
 import AdminPanelWithSecurity from "./AdminPanelWithSecurity";
+import PrivilegedSessionsPanel from "./PrivilegedSessionsPanel";
 import SupportAdminPanel from "./SupportAdminPanel";
 import SupportSecurityDrawer from "./SupportSecurityDrawer";
 
@@ -15,13 +16,21 @@ export default function AdminRoute() {
     );
   }
 
-  if (user?.role === "admin") return <AdminPanelWithSecurity />;
+  if (user?.role === "admin") {
+    return (
+      <>
+        <AdminPanelWithSecurity />
+        <PrivilegedSessionsPanel />
+      </>
+    );
+  }
 
   if (user?.role === "support") {
     return (
       <>
         <SupportAdminPanel />
         <SupportSecurityDrawer />
+        <PrivilegedSessionsPanel />
       </>
     );
   }
