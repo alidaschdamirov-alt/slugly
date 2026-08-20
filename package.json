@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx watch server/_core/index.ts",
     "build": "node scripts/check-server-circular-imports.mjs && vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --sourcemap --outdir=dist",
-    "start": "NODE_ENV=production node dist/index.js",
+    "start": "NODE_ENV=production node --enable-source-maps dist/index.js",
     "check": "tsc --noEmit",
     "check:circular": "node scripts/check-server-circular-imports.mjs",
     "format": "prettier --write .",
