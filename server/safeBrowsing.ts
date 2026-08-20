@@ -4,17 +4,20 @@ import { normalizeDestinationUrl } from "../shared/validation/destination-url";
 /**
  * URL safety checker using Google Safe Browsing Lookup API v4.
  * Falls back to URLhaus API if Safe Browsing key is not configured.
- * Results are cached by hostname with a short TTL to avoid excessive API calls.
+ * Results are cached by normalized URL with a short TTL to avoid excessive API calls.
  */
 
-interface SafetyResult {
+export type ThreatVerdict = "clean" | "malicious" | "unknown";
+
+export interface SafetyResult {
   safe: boolean;
+  verdict: ThreatVerdict;
+  threatTypes: string[];
   reason?: string;
 }
 
-// In-memory cache by hostname (TTL: 5 minutes)
 const cache = new Map<string, { result: SafetyResult; expiresAt: number }>();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 function getHostname(url: string): string | null {
   try {
@@ -24,60 +27,70 @@ function getHostname(url: string): string | null {
   }
 }
 
-function getCachedResult(hostname: string): SafetyResult | null {
-  const entry = cache.get(hostname);
+function getCachedResult(cacheKey: string): SafetyResult | null {
+  const entry = cache.get(cacheKey);
   if (!entry) return null;
   if (Date.now() > entry.expiresAt) {
-    cache.delete(hostname);
+    cache.delete(cacheKey);
     return null;
   }
   return entry.result;
 }
 
-function setCachedResult(hostname: string, result: SafetyResult) {
-  cache.set(hostname, { result, expiresAt: Date.now() + CACHE_TTL_MS });
-  // Evict old entries periodically (keep cache under 10K entries)
+function setCachedResult(cacheKey: string, result: SafetyResult) {
+  cache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
   if (cache.size > 10000) {
     const now = Date.now();
-    const keys = Array.from(cache.keys());
-    for (const key of keys) {
-      const val = cache.get(key);
-      if (val && now > val.expiresAt) cache.delete(key);
+    for (const [key, value] of cache.entries()) {
+      if (now > value.expiresAt) cache.delete(key);
     }
   }
 }
 
+export function clearSafeBrowsingCache(url?: string) {
+  if (!url) {
+    cache.clear();
+    return;
+  }
+  const normalized = normalizeDestinationUrl(url);
+  if (normalized) cache.delete(normalized);
+}
+
 /**
- * Check if a URL is safe. Returns { safe: true } or { safe: false, reason: "..." }.
+ * Check if a URL is safe.
+ * `safe` is retained for backwards compatibility: unknown is fail-open (`safe: true`).
  */
 export async function checkUrlSafety(url: string): Promise<SafetyResult> {
   const normalized = normalizeDestinationUrl(url);
   if (!normalized) {
     return {
       safe: false,
+      verdict: "malicious",
+      threatTypes: ["INVALID_URL"],
       reason: "Enter a valid URL, for example https://example.com/page",
     };
   }
 
   const hostname = getHostname(normalized);
-  if (!hostname) return { safe: false, reason: "Invalid URL" };
-
-  // Check cache first
-  const cached = getCachedResult(hostname);
-  if (cached !== null) return cached;
-
-  // Try Google Safe Browsing first
-  const apiKey =
-    (ENV as any).SAFE_BROWSING_API_KEY || process.env.SAFE_BROWSING_API_KEY;
-  if (apiKey) {
-    const result = await checkGoogleSafeBrowsing(normalized, apiKey);
-    setCachedResult(hostname, result);
-    return result;
+  if (!hostname) {
+    return {
+      safe: false,
+      verdict: "malicious",
+      threatTypes: ["INVALID_URL"],
+      reason: "Invalid URL",
+    };
   }
 
-  // Fallback: URLhaus API (free, no key needed)
-  const result = await checkUrlhaus(normalized, hostname);
-  setCachedResult(hostname, result);
+  const cached = getCachedResult(normalized);
+  if (cached !== null) return cached;
+
+  const apiKey =
+    (ENV as any).SAFE_BROWSING_API_KEY || process.env.SAFE_BROWSING_API_KEY;
+  const result = apiKey
+    ? await checkGoogleSafeBrowsing(normalized, apiKey)
+    : await checkUrlhaus(normalized, hostname);
+
+  setCachedResult(normalized, result);
   return result;
 }
 
@@ -88,7 +101,7 @@ async function checkGoogleSafeBrowsing(
   try {
     const endpoint = `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${apiKey}`;
     const body = {
-      client: { clientId: "slugly", clientVersion: "1.0" },
+      client: { clientId: "slugly", clientVersion: "1.0.0" },
       threatInfo: {
         threatTypes: [
           "MALWARE",
@@ -106,65 +119,68 @@ async function checkGoogleSafeBrowsing(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(3000),
     });
 
     if (!resp.ok) {
       console.error(`[SafeBrowsing] API error: ${resp.status}`);
-      // On API error, allow the URL (fail-open to not block users)
-      return { safe: true };
+      return { safe: true, verdict: "unknown", threatTypes: [] };
     }
 
-    const data = (await resp.json()) as { matches?: any[] };
-    if (data.matches && data.matches.length > 0) {
-      const threatType = data.matches[0].threatType || "UNKNOWN";
+    const data = (await resp.json()) as { matches?: Array<{ threatType?: string }> };
+    const matches = data.matches ?? [];
+    if (matches.length > 0) {
+      const threatTypes = matches
+        .map(match => match.threatType || "UNKNOWN")
+        .filter(Boolean);
       return {
         safe: false,
-        reason: `URL flagged as ${threatType.toLowerCase().replace(/_/g, " ")}`,
+        verdict: "malicious",
+        threatTypes,
+        reason: `URL flagged as ${threatTypes[0].toLowerCase().replace(/_/g, " ")}`,
       };
     }
 
-    return { safe: true };
+    return { safe: true, verdict: "clean", threatTypes: [] };
   } catch (err) {
     console.error("[SafeBrowsing] Request failed:", err);
-    // Fail-open on network errors
-    return { safe: true };
+    return { safe: true, verdict: "unknown", threatTypes: [] };
   }
 }
 
 async function checkUrlhaus(
-  url: string,
+  _url: string,
   hostname: string
 ): Promise<SafetyResult> {
   try {
-    // URLhaus host lookup
     const resp = await fetch("https://urlhaus-api.abuse.ch/v1/host/", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: `host=${encodeURIComponent(hostname)}`,
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(3000),
     });
 
     if (!resp.ok) {
-      return { safe: true }; // Fail-open
+      return { safe: true, verdict: "unknown", threatTypes: [] };
     }
 
     const data = (await resp.json()) as { query_status?: string; urls?: any[] };
     if (data.query_status === "no_results") {
-      return { safe: true };
+      return { safe: true, verdict: "clean", threatTypes: [] };
     }
 
-    // If there are active URLs for this host, flag it
-    if (data.urls && data.urls.some((u: any) => u.url_status === "online")) {
+    if (data.urls && data.urls.some((entry: any) => entry.url_status === "online")) {
       return {
         safe: false,
+        verdict: "malicious",
+        threatTypes: ["URLHAUS_MALWARE"],
         reason: "URL host found in URLhaus malware database",
       };
     }
 
-    return { safe: true };
+    return { safe: true, verdict: "clean", threatTypes: [] };
   } catch (err) {
     console.error("[URLhaus] Request failed:", err);
-    return { safe: true }; // Fail-open
+    return { safe: true, verdict: "unknown", threatTypes: [] };
   }
 }
