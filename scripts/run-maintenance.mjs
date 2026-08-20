@@ -13,7 +13,9 @@ const baseUrl =
 const endpoints = [
   "/api/scheduled/backup",
   "/api/scheduled/notify-expiring-links",
+  "/api/scheduled/weekly-digest",
   "/api/scheduled/cleanup-rate-limits",
+  "/api/scheduled/safe-browsing-rescan",
 ];
 
 for (const endpoint of endpoints) {
