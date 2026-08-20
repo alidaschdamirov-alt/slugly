@@ -13,6 +13,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { redirectRouter } from "../redirect";
 import { quarantineGuardRouter } from "../quarantineGuard";
+import { securityStateRouter } from "../securityStateApi";
 import { backupHandler } from "../backup";
 import { isAuthorizedCronRequest } from "./cronAuth";
 import { getDestinationUrlError, normalizeDestinationUrl } from "../../shared/validation/destination-url";
@@ -119,11 +120,10 @@ async function startServer() {
     })
   );
   const server = createServer(app);
-  // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageRoutes(app);
-  // tRPC API
+
   app.use(
     "/api/trpc",
     validateDestinationUrlsBeforeTrpc,
@@ -132,12 +132,13 @@ async function startServer() {
       createContext,
     })
   );
-  // Health check endpoint
+
+  app.use("/api/security", securityStateRouter);
+
   app.get("/healthz", (_req, res) => {
     res.json({ status: "ok", uptime: process.uptime(), timestamp: Date.now() });
   });
 
-  // Link analytics supplement: bot-filtered total and unique clicks for a single link.
   app.get("/api/link/:id/unique-clicks", async (req, res) => {
     try {
       const linkId = Number(req.params.id);
@@ -166,7 +167,6 @@ async function startServer() {
     }
   });
 
-  // Scheduled task handlers (must be before Vite/static fallthrough)
   app.post("/api/scheduled/backup", backupHandler);
   app.post("/api/scheduled/notify-expiring-links", async (req, res) => {
     try {
@@ -273,12 +273,9 @@ async function startServer() {
     }
   });
 
-  // Security guard runs before the normal redirect handler. Quarantined links
-  // never reach rule evaluation, click recording, pixels, or the destination.
   app.use("/r", quarantineGuardRouter);
   app.use("/r", redirectRouter);
 
-  // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
   } else {
