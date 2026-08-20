@@ -1,7 +1,6 @@
 import { AUDIT_EVENTS } from "../shared/audit-events";
 import { writeAuditEvent } from "./audit";
 import { getSiteSetting, setSiteSetting } from "./db";
-import { invalidateLinkCache } from "./redirect";
 
 export interface LinkQuarantineState {
   quarantined: true;
@@ -60,7 +59,6 @@ export async function quarantineLink(input: {
 
   await setSiteSetting(settingKey(input.linkId), JSON.stringify(state));
   cache.set(input.linkId, { value: state, expiresAt: now + CACHE_TTL_MS });
-  if (input.shortCode) invalidateLinkCache(input.shortCode);
 
   await writeAuditEvent({
     event: AUDIT_EVENTS.LINK_QUARANTINE,
@@ -88,7 +86,6 @@ export async function clearLinkQuarantine(input: {
 }) {
   await setSiteSetting(settingKey(input.linkId), "null");
   cache.set(input.linkId, { value: null, expiresAt: Date.now() + CACHE_TTL_MS });
-  if (input.shortCode) invalidateLinkCache(input.shortCode);
 
   await writeAuditEvent({
     event: AUDIT_EVENTS.LINK_RESUME,
