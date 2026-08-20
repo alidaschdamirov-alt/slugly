@@ -7,6 +7,19 @@ import { ENV, isProtectedAdminEmail } from "./env";
 
 export type AuthenticatedUser = User;
 
+export function parseFactorVerificationAge(value: unknown): [number, number] | null {
+  if (!Array.isArray(value) || value.length < 2) return null;
+  const first = Number(value[0]);
+  const second = Number(value[1]);
+  if (!Number.isFinite(first) || !Number.isFinite(second)) return null;
+  return [first, second];
+}
+
+export function hasVerifiedSecondFactorAge(value: unknown): boolean {
+  const factorAge = parseFactorVerificationAge(value);
+  return !!factorAge && factorAge[1] >= 0;
+}
+
 class ClerkAuthService {
   async authenticateRequest(req: Request): Promise<AuthenticatedUser> {
     const auth = getAuth(req);
@@ -38,12 +51,7 @@ class ClerkAuthService {
   getFactorVerificationAge(req: Request): [number, number] | null {
     try {
       const auth = getAuth(req) as any;
-      const value = auth.factorVerificationAge ?? auth.sessionClaims?.fva;
-      if (!Array.isArray(value) || value.length < 2) return null;
-      const first = Number(value[0]);
-      const second = Number(value[1]);
-      if (!Number.isFinite(first) || !Number.isFinite(second)) return null;
-      return [first, second];
+      return parseFactorVerificationAge(auth.factorVerificationAge ?? auth.sessionClaims?.fva);
     } catch {
       return null;
     }
