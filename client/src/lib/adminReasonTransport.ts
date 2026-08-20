@@ -1,9 +1,12 @@
 export const DESTRUCTIVE_ADMIN_PROCEDURES: Record<string, string> = {
+  "admin.disableLink": "Reason for pausing this link",
   "admin.suspendUser": "Reason for suspending this user",
   "admin.banUser": "Reason for banning this user",
   "admin.deleteUser": "Reason for permanently deleting this user",
   "admin.deleteLink": "Reason for permanently deleting this link",
   "admin.cleanupExpiredAnonymous": "Reason for bulk cleanup of expired anonymous links",
+  "admin.addBlockedDomain": "Reason for blocking this destination domain",
+  "admin.removeBlockedDomain": "Reason for unblocking this destination domain",
 };
 
 export class AdminActionReasonRequiredError extends Error {
