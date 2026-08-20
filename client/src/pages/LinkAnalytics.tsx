@@ -6,9 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
-import { ArrowLeft, Globe, Monitor, Chrome, Link2, Loader2, Copy, Check, Pencil, Trash2, QrCode, Pause, Play } from "lucide-react";
+import { ArrowLeft, Globe, Monitor, Chrome, Link2, Loader2, Copy, Check, Pencil, Trash2, QrCode, Pause, Play, ShieldAlert } from "lucide-react";
 import { getCountryFlag, getBrowserIcon, getDeviceIcon } from "@/lib/analyticsHelpers";
 import { getEffectiveLinkStatus, getEffectiveStatusClass, getEffectiveStatusLabel } from "@/lib/linkStatus";
+import { useLinkSecurityStates } from "@/lib/securityState";
 import WorldMap from "@/components/WorldMap";
 import LinkPreview from "@/components/LinkPreview";
 import InlineQrCode from "@/components/InlineQrCode";
@@ -19,6 +20,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { QrCodeDialog } from "@/components/QrCodeDialog";
 import CsvExportButton from "@/components/CsvExportButton";
 import EditLinkDialog, { type EditLinkDialogPayload } from "@/components/EditLinkDialog";
+import { useQueryClient } from "@tanstack/react-query";
 
 export default function LinkAnalytics() {
   const { user, loading: authLoading } = useAuth();
@@ -38,7 +40,13 @@ export default function LinkAnalytics() {
     { enabled: !!user && linkId > 0 }
   );
   const { data: projects } = trpc.project.list.useQuery(undefined, { enabled: !!user });
+  const {
+    data: securityStates,
+    isLoading: securityLoading,
+  } = useLinkSecurityStates(linkId > 0 ? [linkId] : [], !!user && linkId > 0);
+  const quarantineState = securityStates?.[linkId];
   const utils = trpc.useUtils();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (!user || linkId <= 0 || requestedUniqueClicksRef.current === linkId) return;
@@ -61,22 +69,30 @@ export default function LinkAnalytics() {
     };
   }, [user, linkId]);
 
+  const refreshSecurityState = () =>
+    queryClient.invalidateQueries({ queryKey: ["link-security-states"] });
+
   const updateLink = trpc.link.update.useMutation({
     onSuccess: () => {
       utils.link.analytics.invalidate({ id: linkId });
       utils.link.list.invalidate();
       utils.project.list.invalidate();
       utils.tag.list.invalidate();
+      refreshSecurityState();
       setEditOpen(false);
       toast.success("Link updated");
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err) => {
+      refreshSecurityState();
+      toast.error(err.message);
+    },
   });
 
   const toggleStatus = trpc.link.update.useMutation({
     onSuccess: () => {
       utils.link.analytics.invalidate({ id: linkId });
       utils.link.list.invalidate();
+      refreshSecurityState();
       toast.success("Status updated");
     },
     onError: (err) => toast.error(err.message),
@@ -98,8 +114,11 @@ export default function LinkAnalytics() {
       ? `https://${data.customDomain}/${data.link.shortCode}`
       : `${window.location.origin}/r/${data.link.shortCode}`
     : "";
-  const effectiveStatus = data?.link ? getEffectiveLinkStatus(data.link) : "active";
+  const effectiveStatus = data?.link
+    ? getEffectiveLinkStatus({ ...data.link, quarantined: !!quarantineState })
+    : "active";
   const uniqueClicks = uniqueClicksFromApi ?? (data as any)?.uniqueClicks ?? (data as any)?.uniqueClickCount;
+  const loading = isLoading || (linkId > 0 && securityLoading);
 
   const copyLink = () => {
     if (shortUrl) {
@@ -139,7 +158,7 @@ export default function LinkAnalytics() {
         Back
       </button>
 
-      {isLoading ? (
+      {loading ? (
         <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin" /></div>
       ) : !data ? (
         <div className="text-center py-16"><p className="text-muted-foreground">Link not found</p></div>
@@ -188,7 +207,7 @@ export default function LinkAnalytics() {
                 )}
               </div>
               <div className="flex items-center gap-2 flex-wrap justify-end">
-                <Button variant="outline" size="sm" onClick={handleToggleStatus}>
+                <Button variant="outline" size="sm" onClick={handleToggleStatus} disabled={!!quarantineState}>
                   {data.link.status === "active" ? <Pause className="h-3.5 w-3.5 mr-1.5" /> : <Play className="h-3.5 w-3.5 mr-1.5" />}
                   {data.link.status === "active" ? "Pause" : "Resume"}
                 </Button>
@@ -207,6 +226,31 @@ export default function LinkAnalytics() {
               </div>
             </div>
           </div>
+
+          {quarantineState && (
+            <Card className="border-red-300 bg-red-50 p-4 dark:border-red-900/50 dark:bg-red-950/20">
+              <div className="flex items-start gap-3">
+                <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-red-700 dark:text-red-300" />
+                <div>
+                  <h3 className="font-semibold text-red-900 dark:text-red-200">Security quarantine</h3>
+                  <p className="mt-1 text-sm text-red-800 dark:text-red-300">
+                    Redirects are blocked while this link is under security review. Replace the destination with a clean URL to release the quarantine automatically.
+                  </p>
+                  <p className="mt-2 rounded-md bg-white/70 px-3 py-2 text-sm text-red-900 dark:bg-black/20 dark:text-red-200">
+                    Reason: {quarantineState.reason}
+                  </p>
+                  {quarantineState.threatTypes.length > 0 && (
+                    <p className="mt-2 text-xs text-red-700 dark:text-red-300">
+                      Security signals: {quarantineState.threatTypes.join(", ")}
+                    </p>
+                  )}
+                  <Button variant="outline" size="sm" className="mt-3" onClick={() => setEditOpen(true)}>
+                    <Pencil className="mr-1.5 h-3.5 w-3.5" /> Fix destination
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          )}
 
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex gap-2">
@@ -345,7 +389,21 @@ export default function LinkAnalytics() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {data?.link && <QrCodeDialog open={qrOpen} onOpenChange={setQrOpen} url={shortUrl} title={data.link.shortCode} />}
+      {data?.link && (
+        <QrCodeDialog
+          open={qrOpen}
+          onOpenChange={setQrOpen}
+          url={shortUrl}
+          title={data.link.shortCode}
+          isBroken={effectiveStatus === "broken"}
+          isQuarantined={effectiveStatus === "quarantine"}
+          quarantineReason={quarantineState?.reason}
+          onEditDestination={() => {
+            setQrOpen(false);
+            setEditOpen(true);
+          }}
+        />
+      )}
     </AppShell>
   );
 }
