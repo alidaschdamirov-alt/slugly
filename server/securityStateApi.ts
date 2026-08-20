@@ -1,8 +1,14 @@
 import { Router, type Request, type Response } from "express";
 import { inArray, like } from "drizzle-orm";
 import { links, siteSettings } from "../drizzle/schema";
-import { getDb, getLinksByUserId } from "./db";
-import { getLinkQuarantineState, type LinkQuarantineState } from "./linkQuarantine";
+import { getDb, getLinkById, getLinksByUserId } from "./db";
+import {
+  clearLinkQuarantine,
+  getLinkQuarantineState,
+  quarantineLink,
+  type LinkQuarantineState,
+} from "./linkQuarantine";
+import { checkUrlSafety } from "./safeBrowsing";
 import { sdk } from "./_core/sdk";
 
 export const securityStateRouter = Router();
@@ -17,6 +23,21 @@ function parseIds(value: unknown): number[] {
         .filter(id => Number.isInteger(id) && id > 0)
     )
   ).slice(0, 200);
+}
+
+function normalizeReason(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const reason = value.trim();
+  return reason.length >= 3 && reason.length <= 1000 ? reason : null;
+}
+
+async function requireAdmin(req: Request, res: Response) {
+  const user = await sdk.authenticateRequest(req);
+  if (user.role !== "admin") {
+    res.status(403).json({ error: "Forbidden" });
+    return null;
+  }
+  return user;
 }
 
 securityStateRouter.get("/links", async (req: Request, res: Response) => {
@@ -103,6 +124,91 @@ securityStateRouter.get("/admin/quarantine", async (req: Request, res: Response)
     const status = error?.code === "FORBIDDEN" ? 401 : 500;
     return res.status(status).json({
       error: status === 401 ? "Unauthorized" : "Failed to load quarantine queue",
+    });
+  }
+});
+
+securityStateRouter.post("/admin/quarantine/:id/review", async (req: Request, res: Response) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const linkId = Number(req.params.id);
+    if (!Number.isInteger(linkId) || linkId <= 0) {
+      return res.status(400).json({ error: "Invalid link id" });
+    }
+
+    const action = req.body?.action;
+    if (action !== "rescan" && action !== "release") {
+      return res.status(400).json({ error: "Action must be rescan or release" });
+    }
+
+    const reason = normalizeReason(req.body?.reason);
+    if (!reason) {
+      return res.status(400).json({ error: "A review reason is required (3-1000 characters)." });
+    }
+
+    const link = await getLinkById(linkId);
+    if (!link) return res.status(404).json({ error: "Link not found" });
+
+    const current = await getLinkQuarantineState(linkId);
+    if (!current) {
+      return res.status(409).json({ error: "Link is not currently quarantined" });
+    }
+
+    if (action === "release") {
+      await clearLinkQuarantine({
+        linkId,
+        shortCode: link.shortCode,
+        actorId: admin.id,
+        actorName: admin.name || admin.email || "admin",
+        reason: `Manual admin release: ${reason}`,
+      });
+      return res.json({ ok: true, action, verdict: "manual-release", released: true });
+    }
+
+    const safety = await checkUrlSafety(link.destinationUrl);
+    if (safety.verdict === "clean") {
+      await clearLinkQuarantine({
+        linkId,
+        shortCode: link.shortCode,
+        actorId: admin.id,
+        actorName: admin.name || admin.email || "admin",
+        reason: `Admin re-scan passed: ${reason}`,
+      });
+      return res.json({ ok: true, action, verdict: safety.verdict, released: true });
+    }
+
+    if (safety.verdict === "malicious") {
+      await quarantineLink({
+        linkId,
+        shortCode: link.shortCode,
+        reason: safety.reason || "Destination remains unsafe after admin re-scan",
+        threatTypes: safety.threatTypes,
+        source: "admin",
+        actorId: admin.id,
+        actorName: admin.name || admin.email || "admin",
+      });
+      return res.status(409).json({
+        ok: false,
+        action,
+        verdict: safety.verdict,
+        released: false,
+        reason: safety.reason || "Destination is still unsafe",
+      });
+    }
+
+    return res.status(503).json({
+      ok: false,
+      action,
+      verdict: "unknown",
+      released: false,
+      reason: safety.reason || "Security provider is unavailable. Quarantine remains in place.",
+    });
+  } catch (error: any) {
+    const status = error?.code === "FORBIDDEN" ? 401 : 500;
+    return res.status(status).json({
+      error: status === 401 ? "Unauthorized" : error?.message || "Quarantine review failed",
     });
   }
 });
