@@ -1,17 +1,6 @@
 /**
  * Analytics module — Amplitude + GA4, gated behind cookie consent.
- *
- * Usage:
- *   import { initAnalytics, trackEvent, setAnalyticsConsent, trackPageView } from "@/lib/analytics";
- *
- *   // On app load (checks stored consent)
- *   initAnalytics();
- *
- *   // When user grants consent
- *   setAnalyticsConsent(true);
- *
- *   // Track events (only fires if consent is granted)
- *   trackEvent("link_created", { plan: "free" });
+ * Impersonated support sessions are always excluded from product analytics.
  */
 
 import * as amplitude from "@amplitude/analytics-browser";
@@ -20,6 +9,7 @@ const AMPLITUDE_KEY = import.meta.env.VITE_AMPLITUDE_API_KEY || "";
 const GA_ID = import.meta.env.VITE_GA_ID || "";
 const CONSENT_KEY = "slugly_analytics_consent";
 const MIN_ANALYTICS_ID_LENGTH = 5;
+const IMPERSONATION_FLAG = "slugly_impersonation_active=1";
 
 let initialized = false;
 let consentGranted = false;
@@ -27,9 +17,11 @@ let lastTrackedPage = "";
 let clickTrackingInstalled = false;
 let warnedInvalidAnalyticsId = false;
 
-/**
- * Check if user has previously granted analytics consent.
- */
+export function isAnalyticsSuppressed(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.cookie.split(";").some(value => value.trim() === IMPERSONATION_FLAG);
+}
+
 export function hasConsent(): boolean {
   try {
     return localStorage.getItem(CONSENT_KEY) === "granted";
@@ -38,9 +30,6 @@ export function hasConsent(): boolean {
   }
 }
 
-/**
- * Get consent status: "granted" | "denied" | null (not yet decided)
- */
 export function getConsentStatus(): "granted" | "denied" | null {
   try {
     const v = localStorage.getItem(CONSENT_KEY);
@@ -52,13 +41,17 @@ export function getConsentStatus(): "granted" | "denied" | null {
   }
 }
 
-/**
- * Set analytics consent and initialize/disable tracking accordingly.
- */
 export function setAnalyticsConsent(granted: boolean) {
   try {
     localStorage.setItem(CONSENT_KEY, granted ? "granted" : "denied");
   } catch { /* ignore */ }
+
+  if (isAnalyticsSuppressed()) {
+    consentGranted = false;
+    lastTrackedPage = "";
+    if (initialized) amplitude.setOptOut(true);
+    return;
+  }
 
   if (granted) {
     consentGranted = true;
@@ -68,47 +61,32 @@ export function setAnalyticsConsent(granted: boolean) {
   } else {
     consentGranted = false;
     lastTrackedPage = "";
-
-    // Opt out of Amplitude
-    if (initialized) {
-      amplitude.setOptOut(true);
-    }
-
-    // Revoke GA consent
+    if (initialized) amplitude.setOptOut(true);
     if (typeof window.gtag === "function") {
-      window.gtag("consent", "update", {
-        analytics_storage: "denied",
-      });
+      window.gtag("consent", "update", { analytics_storage: "denied" });
     }
   }
 }
 
-/**
- * Initialize analytics on app startup.
- * Only activates trackers if consent was previously granted.
- */
 export function initAnalytics() {
-  consentGranted = hasConsent();
-  if (consentGranted) {
-    initTrackers();
+  if (isAnalyticsSuppressed()) {
+    consentGranted = false;
+    return;
   }
+  consentGranted = hasConsent();
+  if (consentGranted) initTrackers();
 }
 
 function initTrackers() {
-  if (initialized) return;
+  if (initialized || isAnalyticsSuppressed()) return;
   initialized = true;
-
   installClickTracking();
 
-  // Amplitude
   if (AMPLITUDE_KEY) {
-    amplitude.init(AMPLITUDE_KEY, {
-      autocapture: { elementInteractions: false },
-    });
+    amplitude.init(AMPLITUDE_KEY, { autocapture: { elementInteractions: false } });
     amplitude.setOptOut(false);
   }
 
-  // GA4 — load gtag script dynamically
   if (GA_ID && !document.getElementById("ga-script")) {
     const script = document.createElement("script");
     script.id = "ga-script";
@@ -117,15 +95,9 @@ function initTrackers() {
     document.head.appendChild(script);
 
     window.dataLayer = window.dataLayer || [];
-    window.gtag = function (...args: any[]) {
-      window.dataLayer!.push(args);
-    };
+    window.gtag = function (...args: any[]) { window.dataLayer!.push(args); };
     window.gtag("js", new Date());
-    window.gtag("consent", "default", {
-      analytics_storage: "granted",
-    });
-    // Disable automatic page_view and send explicit page_view events instead.
-    // This is safer for SPA routing and easier to verify in GA4/DebugView.
+    window.gtag("consent", "default", { analytics_storage: "granted" });
     window.gtag("config", GA_ID, {
       anonymize_ip: true,
       send_page_view: false,
@@ -170,26 +142,16 @@ function normalizeAnalyticsTraits(traits?: Record<string, any>) {
   );
 }
 
-/**
- * Track a page view explicitly for GA4 and Amplitude.
- * This is required for SPA navigation where the browser does not reload.
- */
 export function trackPageView(path?: string, title?: string) {
-  if (!consentGranted) return;
-
+  if (!consentGranted || isAnalyticsSuppressed()) return;
   initTrackers();
 
   const pagePath = getPagePath(path);
   const pageTitle = title || (typeof document !== "undefined" ? document.title : "Slugly");
-  const pageLocation = typeof window !== "undefined"
-    ? `${window.location.origin}${pagePath}`
-    : pagePath;
-
-  // Avoid duplicate page_view events for the same exact route.
+  const pageLocation = typeof window !== "undefined" ? `${window.location.origin}${pagePath}` : pagePath;
   if (lastTrackedPage === pagePath) return;
   lastTrackedPage = pagePath;
 
-  // Amplitude
   if (AMPLITUDE_KEY && initialized) {
     amplitude.track("page_view", {
       page_path: pagePath,
@@ -198,7 +160,6 @@ export function trackPageView(path?: string, title?: string) {
     });
   }
 
-  // GA4
   if (GA_ID && typeof window.gtag === "function") {
     window.gtag("event", "page_view", {
       page_title: pageTitle,
@@ -209,12 +170,8 @@ export function trackPageView(path?: string, title?: string) {
   }
 }
 
-/**
- * Track a custom event (only fires if consent is granted).
- */
 export function trackEvent(name: string, properties?: Record<string, any>) {
-  if (!consentGranted) return;
-
+  if (!consentGranted || isAnalyticsSuppressed()) return;
   initTrackers();
 
   const enrichedProperties = {
@@ -222,30 +179,17 @@ export function trackEvent(name: string, properties?: Record<string, any>) {
     ...properties,
   };
 
-  // Amplitude
-  if (AMPLITUDE_KEY && initialized) {
-    amplitude.track(name, enrichedProperties);
-  }
-
-  // GA4
-  if (GA_ID && typeof window.gtag === "function") {
-    window.gtag("event", name, enrichedProperties);
-  }
+  if (AMPLITUDE_KEY && initialized) amplitude.track(name, enrichedProperties);
+  if (GA_ID && typeof window.gtag === "function") window.gtag("event", name, enrichedProperties);
 }
 
-/**
- * Identify user for analytics (only if consent granted).
- */
 export function identifyUser(userId: string, traits?: Record<string, any>) {
-  if (!consentGranted) return;
-
+  if (!consentGranted || isAnalyticsSuppressed()) return;
   const analyticsUserId = normalizeAnalyticsId("user", userId);
   if (!analyticsUserId) return;
-
   initTrackers();
 
   const normalizedTraits = normalizeAnalyticsTraits(traits);
-
   if (AMPLITUDE_KEY && initialized) {
     amplitude.setUserId(analyticsUserId);
     if (normalizedTraits) {
@@ -254,26 +198,20 @@ export function identifyUser(userId: string, traits?: Record<string, any>) {
       amplitude.identify(identify);
     }
   }
-
-  if (GA_ID && typeof window.gtag === "function") {
-    window.gtag("set", { user_id: analyticsUserId });
-  }
+  if (GA_ID && typeof window.gtag === "function") window.gtag("set", { user_id: analyticsUserId });
 }
 
 function installClickTracking() {
   if (clickTrackingInstalled || typeof document === "undefined") return;
   clickTrackingInstalled = true;
-
   document.addEventListener("click", event => {
+    if (isAnalyticsSuppressed()) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
-
     const actionable = target.closest("button, a, [role='button']");
     if (!(actionable instanceof HTMLElement)) return;
-
     const eventName = inferClickEvent(actionable);
     if (!eventName) return;
-
     trackEvent(eventName, {
       label: getElementLabel(actionable),
       href: actionable instanceof HTMLAnchorElement ? actionable.href : undefined,
@@ -287,52 +225,21 @@ function getElementLabel(element: HTMLElement) {
     element.getAttribute("title") ||
     element.textContent ||
     ""
-  )
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120);
+  ).replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
 function inferClickEvent(element: HTMLElement) {
   const label = getElementLabel(element).toLowerCase();
   const href = element instanceof HTMLAnchorElement ? element.getAttribute("href") || "" : "";
-
-  if (href.includes("/auth") || label.includes("sign in") || label.includes("log in")) {
-    return "login_started";
-  }
-
-  if (label.includes("get started") || label.includes("start free") || label.includes("sign up")) {
-    return "signup_started";
-  }
-
-  if (label.includes("new project") || label.includes("create project") || label.includes("first project")) {
-    return "project_create_clicked";
-  }
-
-  if (label.includes("create short link") || label.includes("shorten") || label.includes("add link")) {
-    return "link_create_clicked";
-  }
-
-  if (label === "copy" || label.includes("copy")) {
-    return "link_copy_clicked";
-  }
-
-  if (label.includes("qr")) {
-    return "qr_opened";
-  }
-
-  if (label.includes("analytics") || label.includes("compare")) {
-    return "analytics_opened";
-  }
-
-  if (label.includes("invite")) {
-    return "invite_flow_started";
-  }
-
-  if (label.includes("billing") || href.includes("/billing")) {
-    return "billing_opened";
-  }
-
+  if (href.includes("/auth") || label.includes("sign in") || label.includes("log in")) return "login_started";
+  if (label.includes("get started") || label.includes("start free") || label.includes("sign up")) return "signup_started";
+  if (label.includes("new project") || label.includes("create project") || label.includes("first project")) return "project_create_clicked";
+  if (label.includes("create short link") || label.includes("shorten") || label.includes("add link")) return "link_create_clicked";
+  if (label === "copy" || label.includes("copy")) return "link_copy_clicked";
+  if (label.includes("qr")) return "qr_opened";
+  if (label.includes("analytics") || label.includes("compare")) return "analytics_opened";
+  if (label.includes("invite")) return "invite_flow_started";
+  if (label.includes("billing") || href.includes("/billing")) return "billing_opened";
   return null;
 }
 
@@ -346,7 +253,6 @@ function exposeDebugApi() {
   };
 }
 
-// Type augmentation for window
 declare global {
   interface Window {
     dataLayer?: any[];
