@@ -182,6 +182,31 @@ async function startServer() {
     }
   });
 
+  app.post("/api/scheduled/weekly-digest", async (req, res) => {
+    const startedAt = Date.now();
+    try {
+      if (!isAuthorizedCronRequest(req)) return res.status(403).json({ error: "cron-only" });
+      const { runWeeklyDigest } = await import("../weeklyDigest");
+      const { recordBackgroundJobResult } = await import("../systemHealth");
+      const result = await runWeeklyDigest();
+      await recordBackgroundJobResult("weekly_digest", {
+        success: true,
+        durationMs: Date.now() - startedAt,
+        processed: result.sent,
+        detail: `Sent ${result.sent}; skipped ${result.skipped}`,
+      });
+      return res.json({ ok: true, ...result, durationMs: Date.now() - startedAt });
+    } catch (err: any) {
+      const { recordBackgroundJobResult } = await import("../systemHealth");
+      await recordBackgroundJobResult("weekly_digest", {
+        success: false,
+        durationMs: Date.now() - startedAt,
+        detail: err?.message || "Weekly digest failed",
+      }).catch(() => undefined);
+      return res.status(500).json({ error: "Weekly digest failed. Check System Health for details." });
+    }
+  });
+
   app.post("/api/scheduled/cleanup-rate-limits", async (req, res) => {
     try {
       if (!isAuthorizedCronRequest(req)) return res.status(403).json({ error: "cron-only" });
