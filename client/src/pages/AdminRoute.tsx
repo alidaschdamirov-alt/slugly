@@ -5,6 +5,7 @@ import AdminPanelWithSecurity from "./AdminPanelWithSecurity";
 import PrivilegedSessionsPanel from "./PrivilegedSessionsPanel";
 import SupportAdminPanel from "./SupportAdminPanel";
 import SupportSecurityDrawer from "./SupportSecurityDrawer";
+import SystemHealthPanel from "./SystemHealthPanel";
 
 export default function AdminRoute() {
   const { user, loading } = useAuth();
@@ -23,6 +24,7 @@ export default function AdminRoute() {
         <AdminPanelWithSecurity />
         <PrivilegedSessionsPanel />
         <AdminIpAllowlistPanel />
+        <SystemHealthPanel />
       </>
     );
   }
@@ -33,6 +35,7 @@ export default function AdminRoute() {
         <SupportAdminPanel />
         <SupportSecurityDrawer />
         <PrivilegedSessionsPanel />
+        <SystemHealthPanel />
       </>
     );
   }
