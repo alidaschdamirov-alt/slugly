@@ -4,6 +4,7 @@ import { links, siteSettings } from "../drizzle/schema";
 import { AUDIT_EVENTS } from "../shared/audit-events";
 import { getAuditRequestContext, writeAuditEvent } from "./audit";
 import { getDb, getLinkById, getLinksByUserId } from "./db";
+import { resolveImpersonation } from "./impersonation";
 import {
   clearLinkQuarantine,
   getLinkQuarantineState,
@@ -18,6 +19,8 @@ import { checkUrlSafety } from "./safeBrowsing";
 import { sdk } from "./_core/sdk";
 
 export const securityStateRouter = Router();
+
+type PrivilegedRole = "support" | "admin";
 
 function parseIds(value: unknown): number[] {
   if (typeof value !== "string") return [];
@@ -37,18 +40,32 @@ function normalizeReason(value: unknown): string | null {
   return reason.length >= 3 && reason.length <= 1000 ? reason : null;
 }
 
-async function requireAdmin(req: Request, res: Response) {
+async function requirePrivileged(
+  req: Request,
+  res: Response,
+  roles: readonly PrivilegedRole[] = ["support", "admin"]
+) {
   const user = await sdk.authenticateRequest(req);
-  if (user.role !== "admin") {
+  if (!roles.includes(user.role as PrivilegedRole)) {
     res.status(403).json({ error: "Forbidden" });
+    return null;
+  }
+  if (!sdk.hasVerifiedSecondFactor(req)) {
+    res.status(403).json({ error: "Two-factor authentication is required for privileged security actions." });
     return null;
   }
   return user;
 }
 
+async function requireAdmin(req: Request, res: Response) {
+  return requirePrivileged(req, res, ["admin"]);
+}
+
 securityStateRouter.get("/links", async (req: Request, res: Response) => {
   try {
-    const user = await sdk.authenticateRequest(req);
+    const actor = await sdk.authenticateRequest(req);
+    const impersonation = await resolveImpersonation(req, actor);
+    const user = impersonation?.target || actor;
     const ids = parseIds(req.query.ids);
     if (ids.length === 0) return res.json({ states: {} });
 
@@ -77,10 +94,8 @@ securityStateRouter.get("/links", async (req: Request, res: Response) => {
 
 securityStateRouter.get("/admin/quarantine", async (req: Request, res: Response) => {
   try {
-    const user = await sdk.authenticateRequest(req);
-    if (user.role !== "admin" && user.role !== "support") {
-      return res.status(403).json({ error: "Forbidden" });
-    }
+    const actor = await requirePrivileged(req, res);
+    if (!actor) return;
 
     const database = await getDb();
     if (!database) return res.status(503).json({ error: "Database unavailable" });
@@ -125,7 +140,7 @@ securityStateRouter.get("/admin/quarantine", async (req: Request, res: Response)
       .filter(Boolean)
       .sort((a: any, b: any) => b.quarantine.updatedAt - a.quarantine.updatedAt);
 
-    return res.json({ links: result });
+    return res.json({ links: result, role: actor.role });
   } catch (error: any) {
     const status = error?.code === "FORBIDDEN" ? 401 : 500;
     return res.status(status).json({
@@ -136,8 +151,8 @@ securityStateRouter.get("/admin/quarantine", async (req: Request, res: Response)
 
 securityStateRouter.post("/admin/quarantine/:id/review", async (req: Request, res: Response) => {
   try {
-    const admin = await requireAdmin(req, res);
-    if (!admin) return;
+    const actor = await requirePrivileged(req, res);
+    if (!actor) return;
 
     const linkId = Number(req.params.id);
     if (!Number.isInteger(linkId) || linkId <= 0) {
@@ -147,6 +162,9 @@ securityStateRouter.post("/admin/quarantine/:id/review", async (req: Request, re
     const action = req.body?.action;
     if (action !== "rescan" && action !== "release") {
       return res.status(400).json({ error: "Action must be rescan or release" });
+    }
+    if (action === "release" && actor.role !== "admin") {
+      return res.status(403).json({ error: "Only administrators may force-release quarantined links." });
     }
 
     const reason = normalizeReason(req.body?.reason);
@@ -166,8 +184,8 @@ securityStateRouter.post("/admin/quarantine/:id/review", async (req: Request, re
       await clearLinkQuarantine({
         linkId,
         shortCode: link.shortCode,
-        actorId: admin.id,
-        actorName: admin.name || admin.email || "admin",
+        actorId: actor.id,
+        actorName: actor.name || actor.email || actor.role,
         reason: `Manual admin release: ${reason}`,
       });
       return res.json({ ok: true, action, verdict: "manual-release", released: true });
@@ -178,9 +196,9 @@ securityStateRouter.post("/admin/quarantine/:id/review", async (req: Request, re
       await clearLinkQuarantine({
         linkId,
         shortCode: link.shortCode,
-        actorId: admin.id,
-        actorName: admin.name || admin.email || "admin",
-        reason: `Admin re-scan passed: ${reason}`,
+        actorId: actor.id,
+        actorName: actor.name || actor.email || actor.role,
+        reason: `${actor.role === "support" ? "Support" : "Admin"} re-scan passed: ${reason}`,
       });
       return res.json({ ok: true, action, verdict: safety.verdict, released: true });
     }
@@ -189,11 +207,11 @@ securityStateRouter.post("/admin/quarantine/:id/review", async (req: Request, re
       await quarantineLink({
         linkId,
         shortCode: link.shortCode,
-        reason: safety.reason || "Destination remains unsafe after admin re-scan",
+        reason: safety.reason || "Destination remains unsafe after privileged re-scan",
         threatTypes: safety.threatTypes,
-        source: "admin",
-        actorId: admin.id,
-        actorName: admin.name || admin.email || "admin",
+        source: actor.role,
+        actorId: actor.id,
+        actorName: actor.name || actor.email || actor.role,
       });
       return res.status(409).json({
         ok: false,
