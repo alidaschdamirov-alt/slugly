@@ -2,6 +2,7 @@ import type { Request } from "express";
 import { TRPCError } from "@trpc/server";
 import { writeAuditLog } from "./db";
 import {
+  AUDIT_EVENTS,
   auditEventRequiresReason,
   type AuditEntry,
   type AuditEvent,
@@ -62,4 +63,61 @@ export interface AdminAuditDescriptor {
   targetId?: (input: Record<string, unknown>, result: unknown) => string | number | null;
   payload?: (input: Record<string, unknown>, result: unknown) => Record<string, unknown> | undefined;
   reasonField?: string;
+}
+
+/**
+ * Legacy admin mutations already write their own audit record inside the router
+ * or service layer. The central middleware skips these to avoid duplicate rows.
+ * Any new admin mutation that is not listed here gets a generic admin.mutation
+ * record automatically, so an unaudited admin write cannot be added silently.
+ */
+export const MANUALLY_AUDITED_ADMIN_PATHS = new Set([
+  "admin.updateReport",
+  "admin.disableLink",
+  "admin.deleteLink",
+  "admin.cleanupExpiredAnonymous",
+  "admin.suspendUser",
+  "admin.unsuspendUser",
+  "admin.banUser",
+  "admin.overridePlan",
+  "admin.setRole",
+  "admin.deleteUser",
+  "admin.addBlockedDomain",
+  "admin.removeBlockedDomain",
+  "admin.updateSiteSettings",
+  "admin.updatePlanConfigs",
+  "admin.updatePlanLimits",
+  "admin.overrideWorkspacePlan",
+  "admin.updateReservedSlugs",
+  "admin.exportBackup",
+  "admin.updateEmailConfig",
+  "admin.saveTemplate",
+]);
+
+const SPECIFIC_AUTO_AUDIT: Record<string, AdminAuditDescriptor> = {
+  "admin.previewTemplate": {
+    event: AUDIT_EVENTS.EMAIL_TEMPLATE_PREVIEW,
+    targetType: "email_template",
+    targetId: input => (typeof input.type === "string" ? input.type : null),
+  },
+  "admin.sendTestEmail": {
+    event: AUDIT_EVENTS.EMAIL_TEST_SEND,
+    targetType: "system",
+    payload: input => ({
+      templateType: input.templateType,
+      to: input.to,
+    }),
+  },
+};
+
+export function getAutomaticAdminAuditDescriptor(path: string): AdminAuditDescriptor | null {
+  if (!path.startsWith("admin.")) return null;
+  if (MANUALLY_AUDITED_ADMIN_PATHS.has(path)) return null;
+  return (
+    SPECIFIC_AUTO_AUDIT[path] || {
+      event: AUDIT_EVENTS.ADMIN_MUTATION,
+      targetType: "system",
+      payload: input => ({ path, inputKeys: Object.keys(input) }),
+    }
+  );
 }
