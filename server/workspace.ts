@@ -6,6 +6,7 @@ import { getDb } from "./db";
 import { workspaces, workspaceMembers, workspaceInvitations, projects, links, domains, users, clicks } from "../drizzle/schema";
 import type { Workspace, WorkspaceMember, InsertWorkspace, InsertWorkspaceMember } from "../drizzle/schema";
 import { getSiteSetting, setSiteSetting } from "./db";
+import { normalizeDestinationUrl } from "../shared/validation/destination-url";
 
 // ============ PLAN CONFIG (source of truth for gating) ============
 
@@ -389,6 +390,16 @@ export interface ReportData {
 
 type LinkRow = typeof links.$inferSelect;
 
+function isReportActiveLink(link: LinkRow, now = Date.now()) {
+  if (normalizeDestinationUrl(link.destinationUrl) === null) return false;
+  if (link.status === "paused") return false;
+  const activeFrom = link.activeFrom ? new Date(link.activeFrom).getTime() : null;
+  const expiresAt = link.expiresAt ? new Date(link.expiresAt).getTime() : null;
+  if (expiresAt && expiresAt <= now) return false;
+  if (activeFrom && activeFrom > now) return false;
+  return true;
+}
+
 function periodStart(days: number) {
   return Date.now() - days * 24 * 60 * 60 * 1000;
 }
@@ -542,6 +553,7 @@ export async function generateReportData(workspaceId: number, input: { projectId
   const days = input.days ?? 30;
   const since = periodStart(days);
   const scopedLinks = await getScopedLinks(workspaceId, { projectId: input.projectId, tag: input.tag });
+  const activeLinks = scopedLinks.filter(link => isReportActiveLink(link));
   const linkIds = scopedLinks.map(l => l.id);
   const summary = await getClickSummary(linkIds, days);
   const clickCounts = db && linkIds.length > 0
@@ -583,7 +595,7 @@ export async function generateReportData(workspaceId: number, input: { projectId
     summary: {
       totalClicks: summary.totalClicks,
       uniqueClicks: summary.uniqueClicks,
-      linkCount: scopedLinks.length,
+      linkCount: activeLinks.length,
       topLink: topLinks[0] ? { shortCode: topLinks[0].shortCode } : null,
     },
     timeSeries: summary.clicksOverTime.map(row => ({ day: row.day, clicks: row.count })),
