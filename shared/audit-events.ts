@@ -13,6 +13,8 @@ export const AUDIT_EVENTS = {
   USER_UNSUSPEND: "user.unsuspend",
   USER_DELETE: "user.delete",
   USER_IMPERSONATE: "user.impersonate",
+  USER_IMPERSONATE_ACTION: "user.impersonate_action",
+  USER_IMPERSONATE_EXIT: "user.impersonate_exit",
   LINK_PAUSE: "link.pause",
   LINK_RESUME: "link.resume",
   LINK_DELETE: "link.delete",
