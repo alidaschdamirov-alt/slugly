@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/react";
 import { ClerkProvider } from "@clerk/react";
 import { trpc } from "@/lib/trpc";
 import { injectAdminReasons } from "@/lib/adminReasonTransport";
+import ImpersonationBanner from "@/components/ImpersonationBanner";
 import { UNAUTHED_ERR_MSG } from "@shared/const";
 
 const sentryDsn = import.meta.env.VITE_SENTRY_DSN;
@@ -101,6 +102,7 @@ createRoot(document.getElementById("root")!).render(
   <ClerkProvider publishableKey={clerkPublishableKey} afterSignOutUrl="/">
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
+        <ImpersonationBanner />
         <App />
       </QueryClientProvider>
     </trpc.Provider>
