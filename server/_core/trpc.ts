@@ -18,6 +18,7 @@ import {
   getLinkQuarantineState,
   quarantineLink,
 } from "../linkQuarantine";
+import { isPrivilegedIpAllowed } from "../privilegedIp";
 import { checkUrlSafety, type SafetyResult } from "../safeBrowsing";
 
 const t = initTRPC.context<TrpcContext>().create({ transformer: superjson });
@@ -226,10 +227,10 @@ export const adminProcedure = baseProcedure.use(t.middleware(async opts => {
     throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
   }
   if ((actor.role === "admin" || actor.role === "support") && ctx.mfaVerified === false) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "Two-factor authentication is required for admin and support tools.",
-    });
+    throw new TRPCError({ code: "FORBIDDEN", message: "Two-factor authentication is required for admin and support tools." });
+  }
+  if (!(await isPrivilegedIpAllowed(ctx.req))) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "This IP address is not allowed to use admin and support tools." });
   }
 
   const rawInput = await opts.getRawInput().catch(() => undefined);
