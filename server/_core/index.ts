@@ -12,6 +12,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { redirectRouter } from "../redirect";
+import { quarantineGuardRouter } from "../quarantineGuard";
 import { backupHandler } from "../backup";
 import { isAuthorizedCronRequest } from "./cronAuth";
 import { getDestinationUrlError, normalizeDestinationUrl } from "../../shared/validation/destination-url";
@@ -176,7 +177,7 @@ async function startServer() {
       const { getDb } = await import("../db");
       const { getEmailConfig, sendTemplatedEmail } = await import("../email");
       const { links } = await import("../../drizzle/schema");
-      const { and, isNull, between, eq } = await import("drizzle-orm");
+      const { and, between, eq } = await import("drizzle-orm");
 
       const config = await getEmailConfig();
       if (!config.enabled) {
@@ -189,7 +190,6 @@ async function startServer() {
       const threeDaysFromNow = now + 3 * 24 * 60 * 60 * 1000;
       const fourDaysFromNow = now + 4 * 24 * 60 * 60 * 1000;
 
-      // Find anonymous links (userId=0) expiring in 3-4 days
       const expiringLinks = await database
         .select()
         .from(links)
@@ -201,7 +201,6 @@ async function startServer() {
         )
         .limit(50);
 
-      // Send notification to admin about expiring anonymous links
       if (expiringLinks.length > 0) {
         const adminEmail = config.senderEmail;
         for (const link of expiringLinks) {
@@ -245,8 +244,40 @@ async function startServer() {
       res.status(500).json({ error: err.message });
     }
   });
-  // Short link redirect handler (after API routes, before Vite/static)
+
+  app.post("/api/scheduled/safe-browsing-rescan", async (req, res) => {
+    const startedAt = Date.now();
+    try {
+      if (!isAuthorizedCronRequest(req)) {
+        return res.status(403).json({ error: "cron-only" });
+      }
+      const { rescanActiveLinksWithSafeBrowsing } = await import(
+        "../safeBrowsingRescan"
+      );
+      const requestedLimit = Number(req.body?.limit || process.env.SAFE_BROWSING_RESCAN_LIMIT || 250);
+      const limit = Number.isFinite(requestedLimit) ? requestedLimit : 250;
+      const result = await rescanActiveLinksWithSafeBrowsing(limit);
+      return res.json({
+        ok: true,
+        ...result,
+        durationMs: Date.now() - startedAt,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error("[safe-browsing-rescan]", err);
+      return res.status(500).json({
+        error: err.message || "Safe Browsing re-scan failed",
+        durationMs: Date.now() - startedAt,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  });
+
+  // Security guard runs before the normal redirect handler. Quarantined links
+  // never reach rule evaluation, click recording, pixels, or the destination.
+  app.use("/r", quarantineGuardRouter);
   app.use("/r", redirectRouter);
+
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
