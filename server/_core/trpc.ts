@@ -1,4 +1,5 @@
 import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
+import { destinationUrlSchema } from '@shared/validation/destination-url';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
@@ -8,7 +9,64 @@ const t = initTRPC.context<TrpcContext>().create({
 });
 
 export const router = t.router;
-export const publicProcedure = t.procedure;
+
+const DESTINATION_PROCEDURES = new Set([
+  "link.create",
+  "link.update",
+  "link.createBulk",
+  "link.shortenAnonymous",
+]);
+
+function assertDestinationUrl(value: unknown) {
+  if (typeof value !== "string") return;
+  const result = destinationUrlSchema.safeParse(value);
+  if (!result.success) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: result.error.issues[0]?.message || "Enter a valid destination URL.",
+    });
+  }
+}
+
+function validateDestinationInput(path: string, rawInput: unknown) {
+  if (!DESTINATION_PROCEDURES.has(path) || !rawInput || typeof rawInput !== "object") return;
+  const input = rawInput as Record<string, unknown>;
+
+  if (path === "link.shortenAnonymous") {
+    assertDestinationUrl(input.url);
+    return;
+  }
+
+  if (path === "link.createBulk") {
+    const items = Array.isArray(input.links) ? input.links : [];
+    for (const item of items) {
+      if (item && typeof item === "object") {
+        assertDestinationUrl((item as Record<string, unknown>).destinationUrl);
+      }
+    }
+    return;
+  }
+
+  if (path === "link.create") {
+    assertDestinationUrl(input.destinationUrl);
+    return;
+  }
+
+  if (path === "link.update" && input.destinationUrl !== undefined) {
+    assertDestinationUrl(input.destinationUrl);
+  }
+}
+
+const validateDestinationUrls = t.middleware(async opts => {
+  if (DESTINATION_PROCEDURES.has(opts.path)) {
+    const rawInput = await opts.getRawInput();
+    validateDestinationInput(opts.path, rawInput);
+  }
+  return opts.next();
+});
+
+const baseProcedure = t.procedure.use(validateDestinationUrls);
+export const publicProcedure = baseProcedure;
 
 const requireUser = t.middleware(async opts => {
   const { ctx, next } = opts;
@@ -25,7 +83,7 @@ const requireUser = t.middleware(async opts => {
   });
 });
 
-export const protectedProcedure = t.procedure.use(requireUser);
+export const protectedProcedure = baseProcedure.use(requireUser);
 
 // Workspace-aware procedure: requires user + active workspace + membership
 const requireWorkspace = t.middleware(async opts => {
@@ -48,7 +106,7 @@ const requireWorkspace = t.middleware(async opts => {
   });
 });
 
-export const workspaceProcedure = t.procedure.use(requireWorkspace);
+export const workspaceProcedure = baseProcedure.use(requireWorkspace);
 
 // Editor+ procedure: requires at least editor role in workspace
 const requireEditor = t.middleware(async opts => {
@@ -74,7 +132,7 @@ const requireEditor = t.middleware(async opts => {
   });
 });
 
-export const editorProcedure = t.procedure.use(requireEditor);
+export const editorProcedure = baseProcedure.use(requireEditor);
 
 // Workspace admin procedure: requires admin or owner role
 const requireWsAdmin = t.middleware(async opts => {
@@ -100,9 +158,9 @@ const requireWsAdmin = t.middleware(async opts => {
   });
 });
 
-export const wsAdminProcedure = t.procedure.use(requireWsAdmin);
+export const wsAdminProcedure = baseProcedure.use(requireWsAdmin);
 
-export const adminProcedure = t.procedure.use(
+export const adminProcedure = baseProcedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 
