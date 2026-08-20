@@ -58,7 +58,7 @@ function normalizeReason(reason: unknown) {
   return value.length >= 3 && value.length <= 1000 ? value : null;
 }
 
-function assertSupportActor(actor: User) {
+function assertSupportActor(actor: User): asserts actor is User & { role: "support" | "admin" } {
   if (actor.role !== "admin" && actor.role !== "support") {
     throw new Error("Support or admin access required");
   }
