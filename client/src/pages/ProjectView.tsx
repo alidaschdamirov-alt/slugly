@@ -33,7 +33,6 @@ import {
   getEffectiveStatusLabel,
 } from "@/lib/linkStatus";
 import { trpc } from "@/lib/trpc";
-import { normalizeDestinationUrl } from "@shared/validation/destination-url";
 import {
   AlertTriangle,
   ArrowDown,
@@ -149,6 +148,10 @@ export default function ProjectView() {
     onError: err => toast.error(err.message),
   });
 
+  const brokenLinks = useMemo(() => {
+    return (links || []).filter(link => getEffectiveLinkStatus(link) === "broken");
+  }, [links]);
+
   const filteredAndSortedLinks = useMemo(() => {
     if (!links) return [];
     let result = [...links];
@@ -182,10 +185,6 @@ export default function ProjectView() {
 
     return result;
   }, [links, search, statusFilter, tagFilter, sortField, sortDir]);
-
-  const invalidDestinationLinks = useMemo(() => {
-    return (links || []).filter(link => normalizeDestinationUrl(link.destinationUrl) === null);
-  }, [links]);
 
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
@@ -319,6 +318,7 @@ export default function ProjectView() {
             <SelectItem value="paused">Paused</SelectItem>
             <SelectItem value="scheduled">Scheduled</SelectItem>
             <SelectItem value="expired">Expired</SelectItem>
+            <SelectItem value="broken">Broken</SelectItem>
           </SelectContent>
         </Select>
 
@@ -356,8 +356,8 @@ export default function ProjectView() {
         </div>
       </div>
 
-      {invalidDestinationLinks.length > 0 && (
-        <InvalidDestinationBanner links={invalidDestinationLinks} onEdit={openEditLinkDialog} />
+      {brokenLinks.length > 0 && (
+        <BrokenLinksBanner links={brokenLinks} onEdit={openEditLinkDialog} onShowAll={() => setStatusFilter("broken")} />
       )}
 
       {linksLoading ? (
@@ -491,7 +491,10 @@ export default function ProjectView() {
   );
 }
 
-function InvalidDestinationBanner({ links, onEdit }: { links: any[]; onEdit: (link: any) => void }) {
+function BrokenLinksBanner({ links, onEdit, onShowAll }: { links: any[]; onEdit: (link: any) => void; onShowAll: () => void }) {
+  const hiddenCount = Math.max(links.length - 5, 0);
+  const hiddenLabel = `${hiddenCount} more invalid link${hiddenCount === 1 ? "" : "s"}`;
+
   return (
     <div className="mb-4 rounded-xl border border-destructive/30 bg-destructive/10 p-4">
       <div className="flex items-start gap-3">
@@ -511,7 +514,11 @@ function InvalidDestinationBanner({ links, onEdit }: { links: any[]; onEdit: (li
                 <Button size="sm" variant="outline" onClick={() => onEdit(link)}>Edit destination</Button>
               </div>
             ))}
-            {links.length > 5 && <p className="text-xs text-muted-foreground">+{links.length - 5} more invalid links</p>}
+            {hiddenCount > 0 && (
+              <button type="button" onClick={onShowAll} className="text-xs font-medium text-primary hover:underline">
+                +{hiddenLabel}
+              </button>
+            )}
           </div>
         </div>
       </div>
