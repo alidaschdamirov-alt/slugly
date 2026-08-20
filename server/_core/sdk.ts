@@ -35,6 +35,25 @@ class ClerkAuthService {
     return user;
   }
 
+  getFactorVerificationAge(req: Request): [number, number] | null {
+    try {
+      const auth = getAuth(req) as any;
+      const value = auth.factorVerificationAge ?? auth.sessionClaims?.fva;
+      if (!Array.isArray(value) || value.length < 2) return null;
+      const first = Number(value[0]);
+      const second = Number(value[1]);
+      if (!Number.isFinite(first) || !Number.isFinite(second)) return null;
+      return [first, second];
+    } catch {
+      return null;
+    }
+  }
+
+  hasVerifiedSecondFactor(req: Request): boolean {
+    const factorAge = this.getFactorVerificationAge(req);
+    return !!factorAge && factorAge[1] >= 0;
+  }
+
   private async createLocalUser(
     clerkUserId: string
   ): Promise<User | undefined> {
