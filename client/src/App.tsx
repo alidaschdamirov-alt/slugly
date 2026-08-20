@@ -4,6 +4,7 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch, useLocation } from "wouter";
 import { useEffect } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
+import ImpersonationBanner from "./components/ImpersonationBanner";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import CookieConsent from "./components/CookieConsent";
 import { initAnalytics, trackEvent, trackPageView } from "@/lib/analytics";
@@ -22,7 +23,7 @@ import TagAnalytics from "./pages/TagAnalytics";
 import QrCodesPage from "./pages/QrCodesPage";
 import ReportPage from "./pages/ReportPage";
 import AuthPage from "./pages/AuthPage";
-import AdminPanelWithSecurity from "./pages/AdminPanelWithSecurity";
+import AdminRoute from "./pages/AdminRoute";
 import PrivacySettings from "./pages/PrivacySettings";
 import { TermsPage, PrivacyPage, AupPage } from "./pages/LegalPages";
 import Team from "./pages/Team";
@@ -64,7 +65,7 @@ function AppRoutes() {
       <Route path="/branding" component={WhiteLabelReport} />
       <Route path="/export-report" component={ExportReport} />
       <Route path="/invite/:token" component={InviteAccept} />
-      <Route path="/admin" component={AdminPanelWithSecurity} />
+      <Route path="/admin" component={AdminRoute} />
       <Route path="/privacy-settings" component={PrivacySettings} />
       <Route path="/terms" component={TermsPage} />
       <Route path="/privacy" component={PrivacyPage} />
@@ -200,6 +201,7 @@ function App() {
       <ThemeProvider defaultTheme="light" switchable>
         <TooltipProvider>
           <Toaster />
+          <ImpersonationBanner />
           <AnalyticsRouteTracker />
           <LandingPricingLinkInjector />
           <AppRoutes />
