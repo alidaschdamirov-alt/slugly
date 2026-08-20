@@ -3,6 +3,8 @@ import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import * as db from "./db";
 import * as ws from "./workspace";
+import * as safeBrowsing from "./safeBrowsing";
+import * as quarantine from "./linkQuarantine";
 
 vi.mock("./db", () => ({
   getProjectsByUserId: vi.fn().mockResolvedValue([]),
@@ -25,6 +27,7 @@ vi.mock("./db", () => ({
   deleteLink: vi.fn().mockResolvedValue(undefined),
   isShortCodeRetired: vi.fn().mockResolvedValue(false),
   isHostnameBlocked: vi.fn().mockResolvedValue(false),
+  getBlockedDomains: vi.fn().mockResolvedValue([]),
   getClickCountsByLinkIds: vi.fn().mockResolvedValue({}),
   getClickCountByLinkId: vi.fn().mockResolvedValue(0),
   getClicksOverTime: vi.fn().mockResolvedValue([]),
@@ -53,11 +56,30 @@ vi.mock("./workspace", () => ({
 }));
 
 vi.mock("./safeBrowsing", () => ({
-  checkUrlSafety: vi.fn().mockResolvedValue({ safe: true }),
+  checkUrlSafety: vi.fn().mockResolvedValue({
+    safe: true,
+    verdict: "clean",
+    threatTypes: [],
+  }),
+}));
+
+vi.mock("./linkQuarantine", () => ({
+  quarantineLink: vi.fn().mockResolvedValue({ quarantined: true }),
+}));
+
+vi.mock("./redirect", () => ({
+  isReservedSlug: vi.fn().mockReturnValue(false),
+  invalidateLinkCache: vi.fn(),
+}));
+
+vi.mock("./_core/notification", () => ({
+  notifyOwner: vi.fn().mockResolvedValue(true),
 }));
 
 const mockedDb = vi.mocked(db);
 const mockedWs = vi.mocked(ws);
+const mockedSafety = vi.mocked(safeBrowsing);
+const mockedQuarantine = vi.mocked(quarantine);
 
 function createMockContext(overrides?: Partial<{ plan: string; role: string; wsRole: string }>): TrpcContext {
   const plan = overrides?.plan || "free";
@@ -92,13 +114,16 @@ function createMockContext(overrides?: Partial<{ plan: string; role: string; wsR
       createdAt: new Date(),
     } as any,
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
-    res: { clearCookie: vi.fn() } as unknown as TrpcContext["res"],
+    res: { clearCookie: vi.fn(), cookie: vi.fn() } as unknown as TrpcContext["res"],
   };
 }
+
+const CLEAN = { safe: true, verdict: "clean" as const, threatTypes: [] as string[] };
 
 describe("project router", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedSafety.checkUrlSafety.mockResolvedValue(CLEAN);
     mockedWs.getPlanConfig.mockResolvedValue({
       limits: { projects: 1, links: 5, domains: 0, analyticsRetentionDays: 7, seats: 1 },
       features: { utmTemplates: false, campaignDashboard: "none", csvExport: false, bulkOps: false, geoTarget: false, abTest: false, deepLinks: false, pixels: false, roles: false, whiteLabelReports: false },
@@ -145,6 +170,7 @@ describe("project router", () => {
 describe("link router", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedSafety.checkUrlSafety.mockResolvedValue(CLEAN);
     mockedWs.getPlanConfig.mockResolvedValue({
       limits: { projects: 1, links: 5, domains: 0, analyticsRetentionDays: 7, seats: 1 },
       features: { utmTemplates: false, campaignDashboard: "none", csvExport: false, bulkOps: false, geoTarget: false, abTest: false, deepLinks: false, pixels: false, roles: false, whiteLabelReports: false },
@@ -160,6 +186,62 @@ describe("link router", () => {
     const result = await caller.link.create({ destinationUrl: "https://example.com", customCode: "my-link", title: "Test Link" });
     expect(result.shortCode).toBe("my-link");
     expect(mockedDb.createLink).toHaveBeenCalledWith(expect.objectContaining({ shortCode: "my-link", destinationUrl: "https://example.com", title: "Test Link" }));
+  });
+
+  it("rejects a malicious destination before link creation", async () => {
+    mockedSafety.checkUrlSafety.mockResolvedValue({
+      safe: false,
+      verdict: "malicious",
+      threatTypes: ["SOCIAL_ENGINEERING"],
+      reason: "phishing",
+    });
+    const caller = appRouter.createCaller(createMockContext());
+    await expect(caller.link.create({ destinationUrl: "https://phishing.example" })).rejects.toThrow("flagged as unsafe");
+    expect(mockedDb.createLink).not.toHaveBeenCalled();
+    expect(mockedDb.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "security.destination_rejected",
+    }));
+  });
+
+  it("fails open on an unknown safety verdict and records it for recheck", async () => {
+    mockedSafety.checkUrlSafety.mockResolvedValue({
+      safe: true,
+      verdict: "unknown",
+      threatTypes: [],
+    });
+    mockedDb.createLink.mockResolvedValue({ id: 1 });
+    const caller = appRouter.createCaller(createMockContext());
+    const result = await caller.link.create({ destinationUrl: "https://unknown.example" });
+    expect(result.id).toBe(1);
+    expect(mockedDb.createLink).toHaveBeenCalled();
+    expect(mockedDb.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "security.safe_browsing_unknown",
+    }));
+  });
+
+  it("quarantines an existing owned link when malicious destination update is attempted", async () => {
+    mockedSafety.checkUrlSafety.mockResolvedValue({
+      safe: false,
+      verdict: "malicious",
+      threatTypes: ["MALWARE"],
+      reason: "malware",
+    });
+    mockedDb.getLinkById.mockResolvedValue({
+      id: 7,
+      userId: 1,
+      shortCode: "owned7",
+      destinationUrl: "https://safe.example",
+      status: "active",
+    } as any);
+
+    const caller = appRouter.createCaller(createMockContext());
+    await expect(caller.link.update({ id: 7, destinationUrl: "https://malware.example" })).rejects.toThrow("flagged as unsafe");
+    expect(mockedDb.updateLink).not.toHaveBeenCalled();
+    expect(mockedQuarantine.quarantineLink).toHaveBeenCalledWith(expect.objectContaining({
+      linkId: 7,
+      source: "destination-update",
+      reason: "malware",
+    }));
   });
 
   it("rejects link creation when plan limit reached", async () => {
@@ -227,6 +309,7 @@ describe("link router", () => {
 describe("admin router", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedSafety.checkUrlSafety.mockResolvedValue(CLEAN);
     mockedWs.adminListWorkspaces.mockResolvedValue([
       { id: 1, name: "Test Workspace", plan: "free", memberCount: 1, projectCount: 0, linkCount: 0, domainCount: 0 } as any,
     ]);
@@ -246,7 +329,10 @@ describe("admin router", () => {
 });
 
 describe("domain router", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedSafety.checkUrlSafety.mockResolvedValue(CLEAN);
+  });
 
   it("rejects domain creation when plan limit is 0", async () => {
     mockedWs.checkLimit.mockReturnValue({ allowed: false, limit: 0, current: 0 });
@@ -271,6 +357,7 @@ describe("domain router", () => {
 describe("billing router", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedSafety.checkUrlSafety.mockResolvedValue(CLEAN);
     mockedWs.getPlanConfig.mockResolvedValue({
       limits: { projects: 50, links: 5000, domains: 1, analyticsRetentionDays: 365, seats: 3 },
       features: { utmTemplates: true, campaignDashboard: "full", csvExport: true, bulkOps: true, geoTarget: true, abTest: true, deepLinks: true, pixels: true, roles: true, whiteLabelReports: false },
