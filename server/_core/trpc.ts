@@ -9,6 +9,7 @@ import {
   getAutomaticAdminAuditDescriptor,
   writeAuditEvent,
 } from "../audit";
+import { isDestinationBlockedByPolicy } from "../blocklist";
 import { quarantineLink } from "../linkQuarantine";
 import { checkUrlSafety, type SafetyResult } from "../safeBrowsing";
 
@@ -140,7 +141,7 @@ async function quarantineRejectedDestinationUpdate(
   const { notifyOwner } = await import("./notification");
   await notifyOwner({
     title: "Unsafe destination update blocked",
-    content: `Link #${link.id} /r/${link.shortCode} was quarantined after a destination update was flagged by Safe Browsing. Reason: ${reason}`,
+    content: `Link #${link.id} /r/${link.shortCode} was quarantined after a destination update was flagged by the security layer. Reason: ${reason}`,
   }).catch(() => false);
 }
 
@@ -151,7 +152,15 @@ const enforceDestinationSafety = t.middleware(async opts => {
   const candidates = getDestinationCandidates(opts.path, rawInput);
 
   for (const candidate of candidates) {
-    const safety = await checkUrlSafety(candidate.url);
+    const blockedByPolicy = await isDestinationBlockedByPolicy(candidate.url);
+    const safety: SafetyResult = blockedByPolicy
+      ? {
+          safe: false,
+          verdict: "malicious",
+          threatTypes: ["BLOCKLIST"],
+          reason: "Destination domain is blocked by Slugly security policy",
+        }
+      : await checkUrlSafety(candidate.url);
 
     if (safety.verdict === "unknown") {
       await writeSafetyVerdictAudit({
@@ -209,7 +218,6 @@ const requireUser = t.middleware(async opts => {
 
 export const protectedProcedure = baseProcedure.use(requireUser);
 
-// Workspace-aware procedure: requires user + active workspace + membership
 const requireWorkspace = t.middleware(async opts => {
   const { ctx, next } = opts;
 
@@ -232,7 +240,6 @@ const requireWorkspace = t.middleware(async opts => {
 
 export const workspaceProcedure = baseProcedure.use(requireWorkspace);
 
-// Editor+ procedure: requires at least editor role in workspace
 const requireEditor = t.middleware(async opts => {
   const { ctx, next } = opts;
 
@@ -258,7 +265,6 @@ const requireEditor = t.middleware(async opts => {
 
 export const editorProcedure = baseProcedure.use(requireEditor);
 
-// Workspace admin procedure: requires admin or owner role
 const requireWsAdmin = t.middleware(async opts => {
   const { ctx, next } = opts;
 
@@ -306,6 +312,11 @@ export const adminProcedure = baseProcedure.use(
 
     const procedureType = (opts as { type?: string }).type;
     if (procedureType === "mutation") {
+      if (opts.path === "admin.addBlockedDomain" || opts.path === "admin.removeBlockedDomain") {
+        const { invalidateBlocklistCache } = await import("../blocklist");
+        invalidateBlocklistCache();
+      }
+
       const descriptor = getAutomaticAdminAuditDescriptor(opts.path);
       if (descriptor) {
         const request = getAuditRequestContext(ctx.req);
