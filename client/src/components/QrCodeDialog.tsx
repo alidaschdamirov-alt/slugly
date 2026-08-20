@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Download, Copy, Check, AlertTriangle, Pencil } from "lucide-react";
+import { Download, Copy, Check, AlertTriangle, Pencil, ShieldAlert } from "lucide-react";
 import QRCode from "qrcode";
 
 interface QrCodeDialogProps {
@@ -10,25 +10,33 @@ interface QrCodeDialogProps {
   url: string;
   title?: string;
   isBroken?: boolean;
+  isQuarantined?: boolean;
+  quarantineReason?: string;
   onEditDestination?: () => void;
 }
 
-export function QrCodeDialog({ open, onOpenChange, url, title, isBroken = false, onEditDestination }: QrCodeDialogProps) {
+export function QrCodeDialog({
+  open,
+  onOpenChange,
+  url,
+  title,
+  isBroken = false,
+  isQuarantined = false,
+  quarantineReason,
+  onEditDestination,
+}: QrCodeDialogProps) {
   const [copied, setCopied] = useState(false);
   const [svgData, setSvgData] = useState("");
-
   const [dataUrl, setDataUrl] = useState("");
 
   useEffect(() => {
     if (!open || !url) return;
-    // Generate data URL for visible preview
     QRCode.toDataURL(url, {
       width: 280,
       margin: 2,
       color: { dark: "#14152B", light: "#FFFFFF" },
       errorCorrectionLevel: "M",
-    }).then((dataUrl) => setDataUrl(dataUrl));
-    // Generate SVG string for download
+    }).then((generated) => setDataUrl(generated));
     QRCode.toString(url, {
       type: "svg",
       width: 400,
@@ -39,7 +47,6 @@ export function QrCodeDialog({ open, onOpenChange, url, title, isBroken = false,
   }, [open, url]);
 
   const downloadPng = () => {
-    // Generate high-res PNG for download
     QRCode.toDataURL(url, {
       width: 1024,
       margin: 2,
@@ -79,7 +86,32 @@ export function QrCodeDialog({ open, onOpenChange, url, title, isBroken = false,
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col items-center gap-4 py-4">
-          {isBroken && (
+          {isQuarantined && (
+            <div className="w-full rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
+              <div className="flex items-start gap-2">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">This link is in security quarantine.</p>
+                  <p className="mt-1 text-xs opacity-90">
+                    Scans will open a Slugly security warning instead of redirecting to the destination.
+                  </p>
+                  {quarantineReason && (
+                    <p className="mt-2 rounded bg-white/60 px-2 py-1 text-xs dark:bg-black/20">
+                      Reason: {quarantineReason}
+                    </p>
+                  )}
+                  {onEditDestination && (
+                    <Button type="button" variant="outline" size="sm" className="mt-3" onClick={onEditDestination}>
+                      <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                      Edit destination
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!isQuarantined && isBroken && (
             <div className="w-full rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm text-orange-800 dark:border-orange-900/50 dark:bg-orange-950/30 dark:text-orange-200">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
