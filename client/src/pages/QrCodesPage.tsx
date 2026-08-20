@@ -1,30 +1,46 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import AppShell from "@/components/AppShell";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
-import { trpc } from "@/lib/trpc";
-import { getLoginUrl } from "@/const";
-import { Search, QrCode, Loader2, LayoutGrid, List } from "lucide-react";
-import { useState, useMemo } from "react";
-import { useLocation } from "wouter";
+import EditLinkDialog, { type EditLinkDialogPayload } from "@/components/EditLinkDialog";
 import { QrCodeDialog } from "@/components/QrCodeDialog";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { getLoginUrl } from "@/const";
 import {
   getEffectiveLinkStatus,
   getEffectiveStatusClass,
   getEffectiveStatusLabel,
 } from "@/lib/linkStatus";
+import { trpc } from "@/lib/trpc";
+import { LayoutGrid, List, Loader2, QrCode, Search } from "lucide-react";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 export default function QrCodesPage() {
   const { user, loading: authLoading } = useAuth();
-  const [, setLocation] = useLocation();
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
-  const [selectedLink, setSelectedLink] = useState<{ shortCode: string; url: string; title?: string } | null>(null);
+  const [selectedLink, setSelectedLink] = useState<any | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editLinkRecord, setEditLinkRecord] = useState<any | null>(null);
 
   const { data: links, isLoading } = trpc.link.list.useQuery(undefined, { enabled: !!user });
   const { data: domains } = trpc.domain.list.useQuery(undefined, { enabled: !!user });
+  const { data: projects } = trpc.project.list.useQuery(undefined, { enabled: !!user });
+  const utils = trpc.useUtils();
+
+  const updateLink = trpc.link.update.useMutation({
+    onSuccess: () => {
+      utils.link.list.invalidate();
+      utils.project.list.invalidate();
+      utils.tag.list.invalidate();
+      setEditOpen(false);
+      setEditLinkRecord(null);
+      toast.success("Link updated");
+    },
+    onError: err => toast.error(err.message),
+  });
 
   const filteredLinks = useMemo(() => {
     if (!links) return [];
@@ -46,12 +62,15 @@ export default function QrCodesPage() {
   };
 
   const openQr = (link: any) => {
-    setSelectedLink({
-      shortCode: link.shortCode,
-      url: getQrUrl(link),
-      title: link.title || link.shortCode,
-    });
+    setSelectedLink(link);
     setQrOpen(true);
+  };
+
+  const openEditFromQr = () => {
+    if (!selectedLink) return;
+    setQrOpen(false);
+    setEditLinkRecord(selectedLink);
+    setEditOpen(true);
   };
 
   const StatusPill = ({ link }: { link: any }) => {
@@ -146,7 +165,25 @@ export default function QrCodesPage() {
         )}
       </div>
 
-      {selectedLink && <QrCodeDialog open={qrOpen} onOpenChange={setQrOpen} url={selectedLink.url} title={selectedLink.shortCode} />}
+      {selectedLink && (
+        <QrCodeDialog
+          open={qrOpen}
+          onOpenChange={setQrOpen}
+          url={getQrUrl(selectedLink)}
+          title={selectedLink.shortCode}
+          isBroken={getEffectiveLinkStatus(selectedLink) === "broken"}
+          onEditDestination={openEditFromQr}
+        />
+      )}
+
+      <EditLinkDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        link={editLinkRecord}
+        projects={projects}
+        isPending={updateLink.isPending}
+        onSubmit={(payload: EditLinkDialogPayload) => updateLink.mutate(payload)}
+      />
     </AppShell>
   );
 }
