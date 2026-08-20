@@ -16,13 +16,13 @@ import {
   getEffectiveStatusClass,
   getEffectiveStatusLabel,
 } from "@/lib/linkStatus";
-import { normalizeDestinationUrl } from "../../../shared/validation/destination-url";
 
 interface LinkGridCardProps {
   link: {
     id: number;
     shortCode: string;
     destinationUrl: string;
+    destinationInvalid?: boolean | number | null;
     title: string | null;
     utmSource: string | null;
     utmCampaign: string | null;
@@ -97,7 +97,7 @@ export default function LinkGridCard({
   const [copied, setCopied] = useState(false);
   const baseUrl = window.location.origin;
   const effectiveStatus = getEffectiveLinkStatus(link);
-  const destinationInvalid = normalizeDestinationUrl(link.destinationUrl) === null;
+  const destinationInvalid = effectiveStatus === "broken";
 
   const copyLink = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -126,6 +126,7 @@ export default function LinkGridCard({
   };
 
   const statusTooltip = (() => {
+    if (effectiveStatus === "broken") return "Fix the destination URL before sharing.";
     if (effectiveStatus === "scheduled" && link.activeFrom) {
       return `Starts ${new Date(link.activeFrom).toLocaleString()}`;
     }
@@ -195,11 +196,6 @@ export default function LinkGridCard({
         {destinationInvalid ? <AlertTriangle className="h-3 w-3 shrink-0" /> : <ExternalLink className="h-3 w-3 shrink-0" />}
         {truncateUrl(link.destinationUrl)}
       </p>
-      {destinationInvalid && (
-        <Badge variant="secondary" className="mb-2 border-destructive/30 bg-destructive/10 text-[10px] text-destructive">
-          Broken destination
-        </Badge>
-      )}
 
       {/* Tags */}
       {link.tags && link.tags.length > 0 && (
