@@ -129,7 +129,7 @@ describe("project links page service", () => {
     expect(mocks.getLinksByProjectId).not.toHaveBeenCalled();
   });
 
-  it("streams effective status through bounded SQL chunks including quarantine", async () => {
+  it("streams effective status through bounded SQL chunks including quarantine and reuses metadata", async () => {
     vi.resetModules();
     const { loadProjectLinksPage } = await import("./projectLinksPage");
     const result = await loadProjectLinksPage({
@@ -146,7 +146,11 @@ describe("project links page service", () => {
     expect(result?.items[0]).toMatchObject({ id: 3, effectiveStatus: "quarantine", quarantineReason: "Malware", clickCount: 30 });
     expect(mocks.queryProjectLinksSqlPage).toHaveBeenCalledTimes(2);
     expect(mocks.queryProjectLinksSqlPage).toHaveBeenNthCalledWith(1, expect.objectContaining({ page: 1, limit: 100 }));
-    expect(mocks.queryProjectLinksSqlPage).toHaveBeenNthCalledWith(2, expect.objectContaining({ page: 2, limit: 100 }));
+    expect(mocks.queryProjectLinksSqlPage).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      page: 2,
+      limit: 100,
+      meta: { total: 120, allTags: ["organic", "paid", "summer"] },
+    }));
     expect(mocks.getLinksByProjectId).not.toHaveBeenCalled();
     expect(mocks.getClickCountsByLinkIds).not.toHaveBeenCalled();
   });
