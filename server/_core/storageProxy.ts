@@ -5,10 +5,14 @@ function routeKey(params: Record<string, string>): string | undefined {
   return params[0];
 }
 
+function isPrivateStorageKey(key: string): boolean {
+  return key.startsWith("backups/") || key.startsWith("reports/");
+}
+
 export function registerStorageRoutes(app: Express) {
   app.get("/storage/*", (req, res) => {
     const key = routeKey(req.params as Record<string, string>);
-    if (!key || key.startsWith("backups/")) {
+    if (!key || isPrivateStorageKey(key)) {
       res.status(404).send("Not found");
       return;
     }
