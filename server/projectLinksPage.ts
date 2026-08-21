@@ -57,9 +57,10 @@ export async function loadProjectLinksPage(input: ProjectLinksPageInput) {
   const search = (input.search || "").trim();
   const tag = (input.tag || "").trim();
 
-  // Common path: page and filter in SQL so large projects do not have to load
-  // every link into Node just to render one 50-row page.
-  if (!input.status && input.sortField !== "clicks") {
+  // All views without an effective-security-status filter stay inside SQL:
+  // search, tag filters, created/short-code sorting, and global click sorting
+  // page before data reaches Node, so unlimited projects remain bounded to one page.
+  if (!input.status) {
     const sqlPage = await queryProjectLinksSqlPage({
       projectId: input.projectId,
       page,
@@ -70,13 +71,10 @@ export async function loadProjectLinksPage(input: ProjectLinksPageInput) {
       sortDir: input.sortDir,
     });
     const pageItems = await Promise.all(sqlPage.items.map(addEffectiveStatus));
-    const clickCounts = pageItems.length > 0
-      ? await db.getClickCountsByLinkIds(pageItems.map(link => link.id))
-      : {};
 
     return {
       projectId: input.projectId,
-      items: pageItems.map(link => ({ ...link, clickCount: clickCounts[link.id] || 0 })),
+      items: pageItems.map(link => ({ ...link, clickCount: Number(link.clickCount || 0) })),
       pagination: paginationMeta(sqlPage.page, limit, sqlPage.total, sqlPage.pageCount),
       filters: {
         allTags: sqlPage.allTags,
@@ -89,9 +87,9 @@ export async function loadProjectLinksPage(input: ProjectLinksPageInput) {
     };
   }
 
-  // Effective security statuses (broken/quarantine) are partly stored outside
-  // the links table, and global click sorting needs aggregation. Keep the
-  // compatibility path for those explicit filters while the normal view stays SQL-paged.
+  // Effective security statuses (especially broken/quarantine) are partly
+  // derived from URL validation or state stored outside the links table.
+  // Keep the compatibility path only for explicit status filters.
   const projectLinks = await db.getLinksByProjectId(input.projectId);
   const allTags = Array.from(new Set(
     projectLinks.flatMap(link => Array.isArray(link.tags) ? link.tags : [])
@@ -105,10 +103,8 @@ export async function loadProjectLinksPage(input: ProjectLinksPageInput) {
       .some(value => String(value || "").toLowerCase().includes(normalizedSearch));
   });
 
-  if (input.status) {
-    const withStatus = await Promise.all(candidates.map(addEffectiveStatus));
-    candidates = withStatus.filter(link => link.effectiveStatus === input.status);
-  }
+  const withStatus = await Promise.all(candidates.map(addEffectiveStatus));
+  candidates = withStatus.filter(link => link.effectiveStatus === input.status);
 
   let clickCounts: Record<number, number> = {};
   if (input.sortField === "clicks") {
@@ -130,10 +126,7 @@ export async function loadProjectLinksPage(input: ProjectLinksPageInput) {
   const pageCount = Math.max(1, Math.ceil(total / limit));
   const safePage = Math.min(page, pageCount);
   const offset = (safePage - 1) * limit;
-  const rawPageItems = candidates.slice(offset, offset + limit);
-  const pageItems = input.status
-    ? rawPageItems
-    : await Promise.all(rawPageItems.map(addEffectiveStatus));
+  const pageItems = candidates.slice(offset, offset + limit);
 
   if (input.sortField !== "clicks") {
     clickCounts = pageItems.length > 0
@@ -149,7 +142,7 @@ export async function loadProjectLinksPage(input: ProjectLinksPageInput) {
       allTags,
       search: normalizedSearch,
       tag: tag || null,
-      status: input.status || null,
+      status: input.status,
       sortField: input.sortField,
       sortDir: input.sortDir,
     },
