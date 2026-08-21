@@ -31,11 +31,13 @@ function scheduleProjectLinksFlush() {
     projectLinksScheduled = false;
     const batch = new Map(projectLinksQueue);
     projectLinksQueue.clear();
-    const projectIds = [...batch.keys()];
+    const projectIds = Array.from(batch.keys());
     try {
       const database = await core.getDb();
       if (!database || projectIds.length === 0) {
-        for (const waiters of batch.values()) waiters.forEach(waiter => waiter.resolve([]));
+        for (const waiters of Array.from(batch.values())) {
+          waiters.forEach((waiter: ProjectLinksWaiter) => waiter.resolve([]));
+        }
         return;
       }
       const rows = await database
@@ -51,12 +53,14 @@ function scheduleProjectLinksFlush() {
         list.push(row);
         grouped.set(row.projectId, list);
       }
-      for (const [projectId, waiters] of batch) {
+      for (const [projectId, waiters] of Array.from(batch.entries())) {
         const value = grouped.get(projectId) || [];
-        waiters.forEach(waiter => waiter.resolve(value));
+        waiters.forEach((waiter: ProjectLinksWaiter) => waiter.resolve(value));
       }
     } catch (error) {
-      for (const waiters of batch.values()) waiters.forEach(waiter => waiter.reject(error));
+      for (const waiters of Array.from(batch.values())) {
+        waiters.forEach((waiter: ProjectLinksWaiter) => waiter.reject(error));
+      }
     }
   });
 }
@@ -86,7 +90,7 @@ function scheduleClickCountFlush() {
     clickCountScheduled = false;
     const batch = clickCountQueue;
     clickCountQueue = [];
-    const union = [...new Set(batch.flatMap(request => request.ids))];
+    const union = Array.from(new Set<number>(batch.flatMap(request => request.ids)));
     try {
       const counts = union.length > 0 ? await core.getClickCountsByLinkIds(union) : {};
       for (const request of batch) {
@@ -126,9 +130,9 @@ function scheduleSparklineFlush() {
       groups.set(request.days, group);
     }
 
-    await Promise.all([...groups.entries()].map(async ([days, requests]) => {
+    await Promise.all(Array.from(groups.entries()).map(async ([days, requests]: [number, SparklineRequest[]]) => {
       try {
-        const union = [...new Set(requests.flatMap(request => request.ids))];
+        const union = Array.from(new Set<number>(requests.flatMap((request: SparklineRequest) => request.ids)));
         const perLink = union.length > 0 ? await core.getClicksOverTimeForLinks(union, days) : {};
         for (const request of requests) {
           const totals = new Map<string, number>();
@@ -138,13 +142,13 @@ function scheduleSparklineFlush() {
             }
           }
           request.resolve(
-            [...totals.entries()]
+            Array.from(totals.entries())
               .sort(([a], [b]) => a.localeCompare(b))
               .map(([day, count]) => ({ day, count }))
           );
         }
       } catch (error) {
-        requests.forEach(request => request.reject(error));
+        requests.forEach((request: SparklineRequest) => request.reject(error));
       }
     }));
   });
