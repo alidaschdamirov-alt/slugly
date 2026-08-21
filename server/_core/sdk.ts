@@ -45,6 +45,10 @@ class ClerkAuthService {
     }
 
     if (!user) throw ForbiddenError("User could not be synchronized");
+    const protectedAdmin = auth.userId === ENV.clerkAdminUserId || isProtectedAdminEmail(user.email);
+    if (user.suspended && !protectedAdmin) {
+      throw ForbiddenError("This Slugly account is suspended or pending deletion");
+    }
     return user;
   }
 
