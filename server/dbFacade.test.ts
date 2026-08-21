@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./dbCore", () => ({
+  deleteLink: mocks.coreDeleteLink,
   adminDeleteLink: mocks.coreDeleteLink,
   adminDeleteUser: mocks.coreDeleteUser,
   adminCleanupExpiredAnonymous: mocks.coreCleanup,
@@ -50,6 +51,14 @@ describe("database safety facade", () => {
       2: [{ day: "2026-08-20", count: 3 }],
       3: [{ day: "2026-08-21", count: 4 }],
     });
+  });
+
+  it("routes user link deletion to soft delete only", async () => {
+    vi.resetModules();
+    const db = await import("./db");
+    await db.deleteLink(12);
+    expect(mocks.softDeleteLink).toHaveBeenCalledWith(12);
+    expect(mocks.coreDeleteLink).not.toHaveBeenCalled();
   });
 
   it("routes legacy admin link deletion to soft delete only", async () => {
