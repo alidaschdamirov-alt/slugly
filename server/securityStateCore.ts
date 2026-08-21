@@ -180,7 +180,7 @@ securityStateRouter.post("/admin/quarantine/:id/review", async (req: Request, re
         shortCode: link.shortCode,
         reason: safety.reason || "Destination remains unsafe after privileged re-scan",
         threatTypes: safety.threatTypes,
-        source: actor.role,
+        source: actor.role === "support" ? "support" : "admin",
         actorId: actor.id,
         actorName: actor.name || actor.email || actor.role,
       });
