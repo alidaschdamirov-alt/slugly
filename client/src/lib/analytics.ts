@@ -194,7 +194,7 @@ export function identifyUser(userId: string, traits?: Record<string, any>) {
     amplitude.setUserId(analyticsUserId);
     if (normalizedTraits) {
       const identify = new amplitude.Identify();
-      Object.entries(normalizedTraits).forEach(([k, v]) => identify.set(k, v));
+      Object.entries(normalizedTraits).forEach(([k, v]) => identify.set(k, v as any));
       amplitude.identify(identify);
     }
   }
