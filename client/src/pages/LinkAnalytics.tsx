@@ -13,7 +13,7 @@ import { useLinkSecurityStates } from "@/lib/securityState";
 import WorldMap from "@/components/WorldMap";
 import LinkPreview from "@/components/LinkPreview";
 import InlineQrCode from "@/components/InlineQrCode";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
@@ -32,8 +32,6 @@ export default function LinkAnalytics() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
-  const [uniqueClicksFromApi, setUniqueClicksFromApi] = useState<number | null>(null);
-  const requestedUniqueClicksRef = useRef<number | null>(null);
 
   const { data, isLoading } = trpc.link.analytics.useQuery(
     { id: linkId, days },
@@ -47,27 +45,6 @@ export default function LinkAnalytics() {
   const quarantineState = securityStates?.[linkId];
   const utils = trpc.useUtils();
   const queryClient = useQueryClient();
-
-  useEffect(() => {
-    if (!user || linkId <= 0 || requestedUniqueClicksRef.current === linkId) return;
-    requestedUniqueClicksRef.current = linkId;
-    setUniqueClicksFromApi(null);
-
-    let cancelled = false;
-    fetch(`/api/link/${linkId}/unique-clicks`)
-      .then(response => (response.ok ? response.json() : null))
-      .then(result => {
-        if (!cancelled && typeof result?.uniqueClicks === "number") {
-          setUniqueClicksFromApi(result.uniqueClicks);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) requestedUniqueClicksRef.current = null;
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [user, linkId]);
 
   const refreshSecurityState = () =>
     queryClient.invalidateQueries({ queryKey: ["link-security-states"] });
@@ -117,7 +94,7 @@ export default function LinkAnalytics() {
   const effectiveStatus = data?.link
     ? getEffectiveLinkStatus({ ...data.link, quarantined: !!quarantineState })
     : "active";
-  const uniqueClicks = uniqueClicksFromApi ?? (data as any)?.uniqueClicks ?? (data as any)?.uniqueClickCount;
+  const uniqueClicks = data?.uniqueClicks;
   const loading = isLoading || (linkId > 0 && securityLoading);
 
   const copyLink = () => {
