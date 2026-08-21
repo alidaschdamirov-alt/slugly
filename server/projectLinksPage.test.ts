@@ -129,7 +129,7 @@ describe("project links page service", () => {
     expect(mocks.getLinksByProjectId).not.toHaveBeenCalled();
   });
 
-  it("uses the compatibility scan for shared effective status including quarantine", async () => {
+  it("streams effective status through bounded SQL chunks including quarantine", async () => {
     vi.resetModules();
     const { loadProjectLinksPage } = await import("./projectLinksPage");
     const result = await loadProjectLinksPage({
@@ -142,10 +142,32 @@ describe("project links page service", () => {
       sortDir: "desc",
     });
 
-    expect(result?.pagination.total).toBe(1);
-    expect(result?.items[0]).toMatchObject({ id: 3, effectiveStatus: "quarantine", quarantineReason: "Malware" });
-    expect(mocks.getLinksByProjectId).toHaveBeenCalledWith(10);
-    expect(mocks.queryProjectLinksSqlPage).not.toHaveBeenCalled();
+    expect(result?.pagination).toMatchObject({ page: 1, total: 1, pageCount: 1 });
+    expect(result?.items[0]).toMatchObject({ id: 3, effectiveStatus: "quarantine", quarantineReason: "Malware", clickCount: 30 });
+    expect(mocks.queryProjectLinksSqlPage).toHaveBeenCalledTimes(2);
+    expect(mocks.queryProjectLinksSqlPage).toHaveBeenNthCalledWith(1, expect.objectContaining({ page: 1, limit: 100 }));
+    expect(mocks.queryProjectLinksSqlPage).toHaveBeenNthCalledWith(2, expect.objectContaining({ page: 2, limit: 100 }));
+    expect(mocks.getLinksByProjectId).not.toHaveBeenCalled();
+    expect(mocks.getClickCountsByLinkIds).not.toHaveBeenCalled();
+  });
+
+  it("recovers to the last filtered page when requested status page is out of range", async () => {
+    vi.resetModules();
+    const { loadProjectLinksPage } = await import("./projectLinksPage");
+    const result = await loadProjectLinksPage({
+      userId: 7,
+      projectId: 10,
+      page: 9,
+      limit: 50,
+      status: "paused",
+      sortField: "createdAt",
+      sortDir: "asc",
+    });
+
+    expect(result?.pagination).toMatchObject({ page: 1, total: 1, pageCount: 1, hasPreviousPage: false, hasNextPage: false });
+    expect(result?.items).toHaveLength(1);
+    expect(result?.items[0]).toMatchObject({ id: 5, effectiveStatus: "paused", clickCount: 50 });
+    expect(mocks.getLinksByProjectId).not.toHaveBeenCalled();
   });
 
   it("sorts globally by clicks in SQL without a full project scan and enforces ownership", async () => {
