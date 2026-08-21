@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { getLinkByShortCode } from "./db";
 import { getLinkQuarantineState } from "./linkQuarantine";
+import { isLinkSoftDeleted, isUserSoftDeleted } from "./softDelete";
 
 export const quarantineGuardRouter = Router();
 
@@ -10,6 +11,12 @@ quarantineGuardRouter.get(
     try {
       const link = await getLinkByShortCode(req.params.shortCode);
       if (!link) return next();
+
+      const removed = await isLinkSoftDeleted(link.id) || (link.userId > 0 && await isUserSoftDeleted(link.userId));
+      if (removed) {
+        res.setHeader("Cache-Control", "no-store");
+        return res.status(410).send(renderRemovedPage(req.params.shortCode));
+      }
 
       const quarantine = await getLinkQuarantineState(link.id);
       if (!quarantine) return next();
@@ -36,6 +43,14 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+function renderRemovedPage(shortCode: string) {
+  const safeCode = escapeHtml(shortCode);
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Link unavailable - Slugly</title>
+<style>body{font-family:system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;background:#F4F4FB;color:#14152B}.card{max-width:440px;padding:36px;text-align:center;background:white;border-radius:18px;box-shadow:0 10px 35px rgba(20,21,43,.08)}h1{font-size:24px}p{color:#6F6F8C;line-height:1.6}a{color:#5A3FF0;text-decoration:none;font-weight:600}</style></head>
+<body><main class="card"><h1>Link unavailable</h1><p><strong>/r/${safeCode}</strong> has been removed and is no longer available.</p><p><a href="/">Back to Slugly</a></p></main></body></html>`;
 }
 
 export function renderQuarantinePage(
