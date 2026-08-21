@@ -3,7 +3,7 @@
  * Impersonated support sessions are always excluded from product analytics.
  */
 
-import * as amplitude from "@amplitude/analytics-browser";
+type AmplitudeModule = typeof import("@amplitude/analytics-browser");
 
 const AMPLITUDE_KEY = import.meta.env.VITE_AMPLITUDE_API_KEY || "";
 const GA_ID = import.meta.env.VITE_GA_ID || "";
@@ -16,6 +16,8 @@ let consentGranted = false;
 let lastTrackedPage = "";
 let clickTrackingInstalled = false;
 let warnedInvalidAnalyticsId = false;
+let amplitudeClient: AmplitudeModule | null = null;
+let amplitudeLoading: Promise<AmplitudeModule | null> | null = null;
 
 export function isAnalyticsSuppressed(): boolean {
   if (typeof document === "undefined") return false;
@@ -41,6 +43,37 @@ export function getConsentStatus(): "granted" | "denied" | null {
   }
 }
 
+async function ensureAmplitude(): Promise<AmplitudeModule | null> {
+  if (!AMPLITUDE_KEY || !consentGranted || isAnalyticsSuppressed()) return null;
+  if (amplitudeClient) {
+    amplitudeClient.setOptOut(false);
+    return amplitudeClient;
+  }
+  if (!amplitudeLoading) {
+    amplitudeLoading = import("@amplitude/analytics-browser")
+      .then(module => {
+        amplitudeClient = module;
+        module.init(AMPLITUDE_KEY, { autocapture: { elementInteractions: false } });
+        module.setOptOut(false);
+        return module;
+      })
+      .catch(error => {
+        console.warn("[Analytics] Failed to load Amplitude", error);
+        amplitudeLoading = null;
+        return null;
+      });
+  }
+  return amplitudeLoading;
+}
+
+function withAmplitude(action: (client: AmplitudeModule) => void) {
+  if (!AMPLITUDE_KEY || !consentGranted || isAnalyticsSuppressed()) return;
+  void ensureAmplitude().then(client => {
+    if (!client || !consentGranted || isAnalyticsSuppressed()) return;
+    action(client);
+  });
+}
+
 export function setAnalyticsConsent(granted: boolean) {
   try {
     localStorage.setItem(CONSENT_KEY, granted ? "granted" : "denied");
@@ -49,7 +82,7 @@ export function setAnalyticsConsent(granted: boolean) {
   if (isAnalyticsSuppressed()) {
     consentGranted = false;
     lastTrackedPage = "";
-    if (initialized) amplitude.setOptOut(true);
+    amplitudeClient?.setOptOut(true);
     return;
   }
 
@@ -61,7 +94,7 @@ export function setAnalyticsConsent(granted: boolean) {
   } else {
     consentGranted = false;
     lastTrackedPage = "";
-    if (initialized) amplitude.setOptOut(true);
+    amplitudeClient?.setOptOut(true);
     if (typeof window.gtag === "function") {
       window.gtag("consent", "update", { analytics_storage: "denied" });
     }
@@ -82,10 +115,7 @@ function initTrackers() {
   initialized = true;
   installClickTracking();
 
-  if (AMPLITUDE_KEY) {
-    amplitude.init(AMPLITUDE_KEY, { autocapture: { elementInteractions: false } });
-    amplitude.setOptOut(false);
-  }
+  if (AMPLITUDE_KEY) void ensureAmplitude();
 
   if (GA_ID && !document.getElementById("ga-script")) {
     const script = document.createElement("script");
@@ -152,13 +182,13 @@ export function trackPageView(path?: string, title?: string) {
   if (lastTrackedPage === pagePath) return;
   lastTrackedPage = pagePath;
 
-  if (AMPLITUDE_KEY && initialized) {
-    amplitude.track("page_view", {
+  withAmplitude(client => {
+    client.track("page_view", {
       page_path: pagePath,
       page_title: pageTitle,
       page_location: pageLocation,
     });
-  }
+  });
 
   if (GA_ID && typeof window.gtag === "function") {
     window.gtag("event", "page_view", {
@@ -179,7 +209,7 @@ export function trackEvent(name: string, properties?: Record<string, any>) {
     ...properties,
   };
 
-  if (AMPLITUDE_KEY && initialized) amplitude.track(name, enrichedProperties);
+  withAmplitude(client => client.track(name, enrichedProperties));
   if (GA_ID && typeof window.gtag === "function") window.gtag("event", name, enrichedProperties);
 }
 
@@ -190,14 +220,14 @@ export function identifyUser(userId: string, traits?: Record<string, any>) {
   initTrackers();
 
   const normalizedTraits = normalizeAnalyticsTraits(traits);
-  if (AMPLITUDE_KEY && initialized) {
-    amplitude.setUserId(analyticsUserId);
+  withAmplitude(client => {
+    client.setUserId(analyticsUserId);
     if (normalizedTraits) {
-      const identify = new amplitude.Identify();
+      const identify = new client.Identify();
       Object.entries(normalizedTraits).forEach(([k, v]) => identify.set(k, v as any));
-      amplitude.identify(identify);
+      client.identify(identify);
     }
-  }
+  });
   if (GA_ID && typeof window.gtag === "function") window.gtag("set", { user_id: analyticsUserId });
 }
 
