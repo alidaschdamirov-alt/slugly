@@ -1,0 +1,139 @@
+name: Temporary Live Browser Smoke
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  live-browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install Playwright Chromium
+        run: |
+          mkdir -p /tmp/slugly-smoke
+          cd /tmp/slugly-smoke
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Run production browser smoke
+        env:
+          BASE_URL: https://slugly.io
+          EXPECTED_COMMIT: d282baa3e16be1d77edad765027c6bec866cf438
+        run: |
+          cat > /tmp/slugly-smoke/smoke.mjs <<'NODE'
+          import { chromium, request } from 'playwright';
+          import fs from 'node:fs/promises';
+
+          const base = process.env.BASE_URL.replace(/\/$/, '');
+          const expectedCommit = process.env.EXPECTED_COMMIT;
+          const out = '/tmp/slugly-smoke/screens';
+          await fs.mkdir(out, { recursive: true });
+          const results = [];
+          const failures = [];
+          const assert = (ok, msg) => { if (!ok) throw new Error(msg); };
+
+          const api = await request.newContext({ baseURL: base, extraHTTPHeaders: { 'cache-control': 'no-cache' } });
+          try {
+            const r = await api.get(`/healthz?smoke=${Date.now()}`);
+            assert(r.ok(), `healthz HTTP ${r.status()}`);
+            const h = await r.json();
+            assert(h.status === 'ok', `healthz status ${JSON.stringify(h.status)}`);
+            assert(String(h.commit || '') === expectedCommit, `healthz commit ${h.commit} != ${expectedCommit}`);
+            assert(String(h.runtime || '').startsWith('v24.'), `runtime ${h.runtime} is not Node 24`);
+            results.push({ check: 'healthz', status: 'PASS', commit: h.commit, runtime: h.runtime });
+          } finally { await api.dispose(); }
+
+          const browser = await chromium.launch({ headless: true });
+          const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+          const page = await context.newPage();
+          const pageErrors = [];
+          const sameOrigin5xx = [];
+          page.on('pageerror', e => pageErrors.push(String(e)));
+          page.on('response', r => {
+            try {
+              const u = new URL(r.url());
+              if (u.origin === new URL(base).origin && r.status() >= 500) sameOrigin5xx.push(`${r.status()} ${u.pathname}`);
+            } catch {}
+          });
+
+          async function visit(name, path, verify, waitMs = 1200) {
+            try {
+              const res = await page.goto(`${base}${path}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+              assert(res && res.status() < 500, `${path} HTTP ${res?.status()}`);
+              await page.waitForSelector('#root', { timeout: 15000 });
+              await page.waitForTimeout(waitMs);
+              const body = await page.locator('body').innerText();
+              await verify(body);
+              await page.screenshot({ path: `${out}/${name}.png`, fullPage: true });
+              results.push({ check: name, status: 'PASS', url: page.url(), http: res?.status() });
+            } catch (e) {
+              failures.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
+              try { await page.screenshot({ path: `${out}/${name}-FAIL.png`, fullPage: true }); } catch {}
+            }
+          }
+
+          await visit('homepage', '/', async body => {
+            assert(body.includes('Slugly'), 'homepage missing Slugly branding');
+            assert(body.length > 200, 'homepage body unexpectedly empty');
+          });
+
+          await visit('pricing', '/pricing', async body => {
+            assert(body.includes('Simple plans for short links that need analytics.'), 'pricing headline missing');
+            for (const plan of ['Free', 'Starter', 'Pro', 'Team']) assert(body.includes(plan), `pricing plan ${plan} missing`);
+            assert(body.includes('Stripe billing is not connected yet.'), 'expected Stripe placeholder text missing');
+          });
+
+          await visit('auth-signin', '/auth', async body => {
+            assert(!body.includes('Login is being prepared'), 'Clerk failed to load and fallback is visible');
+            await page.locator('input').first().waitFor({ state: 'visible', timeout: 15000 });
+            assert((await page.locator('input').count()) > 0, 'no Clerk sign-in input rendered');
+          }, 2500);
+
+          await visit('auth-signup', '/auth?mode=signup', async body => {
+            assert(!body.includes('Login is being prepared'), 'Clerk signup fallback is visible');
+            await page.locator('input').first().waitFor({ state: 'visible', timeout: 15000 });
+            assert((await page.locator('input').count()) > 0, 'no Clerk sign-up input rendered');
+          }, 2500);
+
+          for (const [name, path] of [['terms','/terms'],['privacy','/privacy'],['aup','/aup'],['not-found','/404']]) {
+            await visit(name, path, async body => assert(body.trim().length > 80, `${path} body unexpectedly empty`));
+          }
+
+          await visit('dashboard-unauthenticated', '/dashboard', async body => {
+            await page.waitForTimeout(1800);
+            const url = page.url();
+            const hasInput = (await page.locator('input').count()) > 0;
+            assert(url.includes('/auth') || hasInput || /sign in|log in/i.test(body), `unauthenticated dashboard did not present auth flow: ${url}`);
+          }, 1800);
+
+          await browser.close();
+
+          if (sameOrigin5xx.length) failures.push(`same-origin 5xx responses: ${[...new Set(sameOrigin5xx)].join(', ')}`);
+          if (pageErrors.length) console.log('Browser page errors (diagnostic):', JSON.stringify(pageErrors.slice(0, 20), null, 2));
+          console.log('LIVE_BROWSER_RESULTS=' + JSON.stringify(results, null, 2));
+          if (failures.length) {
+            console.error('LIVE_BROWSER_FAILURES=' + JSON.stringify(failures, null, 2));
+            process.exit(1);
+          }
+          NODE
+          cd /tmp/slugly-smoke
+          node smoke.mjs
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slugly-live-browser-smoke
+          path: /tmp/slugly-smoke/screens
+          if-no-files-found: warn
