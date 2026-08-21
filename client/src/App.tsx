@@ -24,6 +24,7 @@ import QrCodesPage from "./pages/QrCodesPage";
 import ReportPage from "./pages/ReportPage";
 import AuthPage from "./pages/AuthPage";
 import AdminRoute from "./pages/AdminRoute";
+import AppealsPage from "./pages/AppealsPage";
 import PrivacySettings from "./pages/PrivacySettings";
 import { TermsPage, PrivacyPage, AupPage } from "./pages/LegalPages";
 import Team from "./pages/Team";
@@ -64,6 +65,7 @@ function AppRoutes() {
       <Route path="/compare" component={ProjectComparison} />
       <Route path="/branding" component={WhiteLabelReport} />
       <Route path="/export-report" component={ExportReport} />
+      <Route path="/appeals" component={AppealsPage} />
       <Route path="/invite/:token" component={InviteAccept} />
       <Route path="/admin" component={AdminRoute} />
       <Route path="/privacy-settings" component={PrivacySettings} />
@@ -94,6 +96,7 @@ function getRouteEvent(location: string) {
   if (location.startsWith("/campaigns")) return "campaigns_opened";
   if (location.startsWith("/compare")) return "comparison_opened";
   if (location.startsWith("/reports") || location.startsWith("/export-report")) return "reports_opened";
+  if (location.startsWith("/appeals")) return "appeals_opened";
   if (location.startsWith("/invite")) return "invite_accept_opened";
   if (location.startsWith("/admin")) return "admin_opened";
   return null;
@@ -101,16 +104,11 @@ function getRouteEvent(location: string) {
 
 function AnalyticsRouteTracker() {
   const [location] = useLocation();
-
   useEffect(() => {
     trackPageView(location);
-
     const eventName = getRouteEvent(location);
-    if (eventName) {
-      trackEvent(eventName, { route: location });
-    }
+    if (eventName) trackEvent(eventName, { route: location });
   }, [location]);
-
   return null;
 }
 
@@ -121,44 +119,29 @@ function normalizeLandingCopy() {
     ["slug.ly/", "slugly.io/r/"],
     ["slug.ly", "slugly.io"],
   ] as const;
-
   const nodes: Text[] = [];
   let current = walker.nextNode();
-  while (current) {
-    nodes.push(current as Text);
-    current = walker.nextNode();
-  }
-
+  while (current) { nodes.push(current as Text); current = walker.nextNode(); }
   for (const node of nodes) {
     let nextValue = node.nodeValue || "";
-    for (const [from, to] of replacements) {
-      nextValue = nextValue.split(from).join(to);
-    }
+    for (const [from, to] of replacements) nextValue = nextValue.split(from).join(to);
     if (nextValue !== node.nodeValue) node.nodeValue = nextValue;
   }
 }
 
 function LandingPricingLinkInjector() {
   const [location] = useLocation();
-
   useEffect(() => {
     if (location !== "/" || typeof document === "undefined") return;
-
     normalizeLandingCopy();
-
     const createPricingLink = (variant: "nav" | "footer") => {
       const link = document.createElement("a");
       link.href = "/pricing";
       link.textContent = "Pricing";
       link.dataset.sluglyPricingLink = variant;
-      if (variant === "nav") {
-        link.className = "font-semibold text-[#6F6F8C] hover:text-[#14152B] transition-colors hidden sm:inline";
-      } else {
-        link.className = "hover:underline";
-      }
+      link.className = variant === "nav" ? "font-semibold text-[#6F6F8C] hover:text-[#14152B] transition-colors hidden sm:inline" : "hover:underline";
       return link;
     };
-
     const nav = document.querySelector("nav");
     if (nav && !nav.querySelector("[data-slugly-pricing-link='nav']")) {
       const navGroups = Array.from(nav.querySelectorAll("div")).filter(group => {
@@ -167,11 +150,8 @@ function LandingPricingLinkInjector() {
       });
       const actions = navGroups[navGroups.length - 1];
       const firstAction = actions?.firstElementChild;
-      if (actions && firstAction) {
-        actions.insertBefore(createPricingLink("nav"), firstAction.nextSibling);
-      }
+      if (actions && firstAction) actions.insertBefore(createPricingLink("nav"), firstAction.nextSibling);
     }
-
     const footer = document.querySelector("footer");
     if (footer && !footer.querySelector("[data-slugly-pricing-link='footer']")) {
       const linkGroups = Array.from(footer.querySelectorAll("div")).filter(group => {
@@ -189,7 +169,6 @@ function LandingPricingLinkInjector() {
       }
     }
   }, [location]);
-
   return null;
 }
 
