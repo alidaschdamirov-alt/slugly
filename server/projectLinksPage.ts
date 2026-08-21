@@ -26,6 +26,7 @@ async function addEffectiveStatus<T extends {
   activeFrom: number | null;
   expiresAt: number | null;
   destinationUrl: string;
+  clickCount?: number | null;
 }>(link: T) {
   const quarantine = await getLinkQuarantineState(link.id);
   return {
