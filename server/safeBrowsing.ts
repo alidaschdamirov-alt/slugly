@@ -41,7 +41,7 @@ function setCachedResult(cacheKey: string, result: SafetyResult) {
   cache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
   if (cache.size > 10000) {
     const now = Date.now();
-    for (const [key, value] of cache.entries()) {
+    for (const [key, value] of Array.from(cache.entries())) {
       if (now > value.expiresAt) cache.delete(key);
     }
   }
