@@ -97,6 +97,10 @@ export async function loadProjectLinksPage(input: ProjectLinksPageInput) {
     page: 1,
     limit: STATUS_SCAN_CHUNK_SIZE,
   });
+  const reusableMeta = {
+    total: firstRawPage.total,
+    allTags: firstRawPage.allTags,
+  };
   const targetStart = (requestedPage - 1) * limit;
   const targetEnd = targetStart + limit;
   const targetItems: Array<Awaited<ReturnType<typeof addEffectiveStatus>>> = [];
@@ -121,6 +125,7 @@ export async function loadProjectLinksPage(input: ProjectLinksPageInput) {
       ...sqlInput,
       page: rawPage,
       limit: STATUS_SCAN_CHUNK_SIZE,
+      meta: reusableMeta,
     });
     await processRawItems(nextRawPage.items);
   }
