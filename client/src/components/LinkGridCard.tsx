@@ -7,6 +7,7 @@ import {
   Trash2,
   QrCode,
   AlertTriangle,
+  ShieldAlert,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -23,6 +24,7 @@ interface LinkGridCardProps {
     shortCode: string;
     destinationUrl: string;
     destinationInvalid?: boolean | number | null;
+    quarantined?: boolean | number | null;
     title: string | null;
     utmSource: string | null;
     utmCampaign: string | null;
@@ -42,20 +44,12 @@ interface LinkGridCardProps {
   onQr?: (e: React.MouseEvent) => void;
 }
 
-function MiniSparkline({
-  data,
-}: {
-  data: Array<{ day: string; count: number }>;
-}) {
+function MiniSparkline({ data }: { data: Array<{ day: string; count: number }> }) {
   if (!data || data.length === 0) {
     return (
       <div className="h-8 flex items-end gap-px">
         {Array.from({ length: 7 }).map((_, i) => (
-          <div
-            key={i}
-            className="flex-1 bg-muted rounded-sm"
-            style={{ height: "2px" }}
-          />
+          <div key={i} className="flex-1 bg-muted rounded-sm" style={{ height: "2px" }} />
         ))}
       </div>
     );
@@ -98,6 +92,7 @@ export default function LinkGridCard({
   const baseUrl = window.location.origin;
   const effectiveStatus = getEffectiveLinkStatus(link);
   const destinationInvalid = effectiveStatus === "broken";
+  const quarantined = effectiveStatus === "quarantine";
 
   const copyLink = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -118,161 +113,67 @@ export default function LinkGridCard({
     }
   };
 
-  const formatDate = (date: string | Date) => {
-    return new Date(date).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-    });
-  };
+  const formatDate = (date: string | Date) => new Date(date).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
   const statusTooltip = (() => {
+    if (quarantined) return "Redirects are blocked while this link is under security review.";
     if (effectiveStatus === "broken") return "Fix the destination URL before sharing.";
-    if (effectiveStatus === "scheduled" && link.activeFrom) {
-      return `Starts ${new Date(link.activeFrom).toLocaleString()}`;
-    }
-    if (effectiveStatus === "expired" && link.expiresAt) {
-      return `Expired ${new Date(link.expiresAt).toLocaleString()}`;
-    }
+    if (effectiveStatus === "scheduled" && link.activeFrom) return `Starts ${new Date(link.activeFrom).toLocaleString()}`;
+    if (effectiveStatus === "expired" && link.expiresAt) return `Expired ${new Date(link.expiresAt).toLocaleString()}`;
     return "Click to pause or resume";
   })();
 
   return (
     <div
       onClick={onClick}
-      className={`group cursor-pointer rounded-[15px] border bg-card p-[15px_16px_13px] transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_18px_40px_-26px_rgba(58,43,176,.5)] ${destinationInvalid ? "border-destructive/40" : ""}`}
+      className={`group cursor-pointer rounded-[15px] border bg-card p-[15px_16px_13px] transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_18px_40px_-26px_rgba(58,43,176,.5)] ${destinationInvalid || quarantined ? "border-destructive/40" : ""}`}
     >
-      {/* Short link + actions */}
       <div className="flex items-center justify-between mb-2">
         <code className="min-w-0 truncate font-mono text-sm font-medium text-foreground">
-          <span className="text-primary">{window.location.host}/r/</span>
-          {link.shortCode}
+          <span className="text-primary">{window.location.host}/r/</span>{link.shortCode}
         </code>
         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          {onQr && (
-            <button
-              onClick={onQr}
-              className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            >
-              <QrCode className="h-3 w-3" />
-            </button>
-          )}
-          {onEdit && (
-            <button
-              onClick={e => {
-                e.stopPropagation();
-                onEdit();
-              }}
-              className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            >
-              <Pencil className="h-3 w-3" />
-            </button>
-          )}
-          {onDelete && (
-            <button
-              onClick={onDelete}
-              className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-muted transition-colors"
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
-          )}
-          <button
-            onClick={copyLink}
-            className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          >
-            {copied ? (
-              <Check className="h-3 w-3 text-green-500" />
-            ) : (
-              <Copy className="h-3 w-3" />
-            )}
+          {onQr && <button onClick={onQr} className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted"><QrCode className="h-3 w-3" /></button>}
+          {onEdit && <button onClick={e => { e.stopPropagation(); onEdit(); }} className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted"><Pencil className="h-3 w-3" /></button>}
+          {onDelete && <button onClick={onDelete} className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-muted"><Trash2 className="h-3 w-3" /></button>}
+          <button onClick={copyLink} className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted">
+            {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
           </button>
         </div>
       </div>
 
-      {/* Title & destination */}
-      {link.title && (
-        <p className="text-sm font-medium truncate mb-0.5">{link.title}</p>
-      )}
-      <p className={`text-xs truncate mb-2 flex items-center gap-1 ${destinationInvalid ? "text-destructive" : "text-muted-foreground"}`}>
-        {destinationInvalid ? <AlertTriangle className="h-3 w-3 shrink-0" /> : <ExternalLink className="h-3 w-3 shrink-0" />}
+      {link.title && <p className="text-sm font-medium truncate mb-0.5">{link.title}</p>}
+      <p className={`text-xs truncate mb-2 flex items-center gap-1 ${destinationInvalid || quarantined ? "text-destructive" : "text-muted-foreground"}`}>
+        {quarantined ? <ShieldAlert className="h-3 w-3 shrink-0" /> : destinationInvalid ? <AlertTriangle className="h-3 w-3 shrink-0" /> : <ExternalLink className="h-3 w-3 shrink-0" />}
         {truncateUrl(link.destinationUrl)}
       </p>
 
-      {/* Tags */}
       {link.tags && link.tags.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-2">
-          {link.tags.slice(0, 3).map(tag => (
-            <Badge
-              key={tag}
-              variant="secondary"
-              className="text-[10px] px-1.5 py-0"
-            >
-              {tag}
-            </Badge>
-          ))}
-          {link.tags.length > 3 && (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-              +{link.tags.length - 3}
-            </Badge>
-          )}
+          {link.tags.slice(0, 3).map(tag => <Badge key={tag} variant="secondary" className="text-[10px] px-1.5 py-0">{tag}</Badge>)}
+          {link.tags.length > 3 && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">+{link.tags.length - 3}</Badge>}
         </div>
       )}
 
-      {/* UTM badges */}
       {(link.utmCampaign || link.utmSource) && !link.tags?.length && (
         <div className="flex flex-wrap gap-1 mb-2">
-          {link.utmSource && (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-              {link.utmSource}
-            </Badge>
-          )}
-          {link.utmCampaign && (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-              {link.utmCampaign}
-            </Badge>
-          )}
+          {link.utmSource && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{link.utmSource}</Badge>}
+          {link.utmCampaign && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{link.utmCampaign}</Badge>}
         </div>
       )}
 
-      {/* Sparkline */}
-      <div className="mb-2">
-        <MiniSparkline data={sparklineData || []} />
-      </div>
+      <div className="mb-2"><MiniSparkline data={sparklineData || []} /></div>
 
-      {/* Footer: clicks + status + date */}
       <div className="flex items-end justify-between">
         <div>
-          <span className="flex items-center gap-1.5 font-mono text-[24px] font-medium leading-none">
-            <MousePointerClick className="h-4 w-4 text-primary" />
-            {link.clickCount.toLocaleString()}
-          </span>
-          <span className="mt-1 block text-[10px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
-            clicks
-          </span>
+          <span className="flex items-center gap-1.5 font-mono text-[24px] font-medium leading-none"><MousePointerClick className="h-4 w-4 text-primary" />{link.clickCount.toLocaleString()}</span>
+          <span className="mt-1 block text-[10px] font-bold uppercase tracking-[0.06em] text-muted-foreground">clicks</span>
         </div>
         <div className="flex items-center gap-2">
-          <span
-            className="text-[10px] text-muted-foreground"
-            title={
-              link.updatedAt &&
-              new Date(link.updatedAt).getTime() -
-                new Date(link.createdAt).getTime() >
-                60000
-                ? `Updated ${formatDate(link.updatedAt)}`
-                : undefined
-            }
-          >
-            {link.updatedAt &&
-            new Date(link.updatedAt).getTime() -
-              new Date(link.createdAt).getTime() >
-              60000
-              ? `✏️ ${formatDate(link.updatedAt)}`
-              : formatDate(link.createdAt)}
+          <span className="text-[10px] text-muted-foreground" title={link.updatedAt && new Date(link.updatedAt).getTime() - new Date(link.createdAt).getTime() > 60000 ? `Updated ${formatDate(link.updatedAt)}` : undefined}>
+            {link.updatedAt && new Date(link.updatedAt).getTime() - new Date(link.createdAt).getTime() > 60000 ? `✏️ ${formatDate(link.updatedAt)}` : formatDate(link.createdAt)}
           </span>
-          <button
-            onClick={onToggleStatus}
-            title={statusTooltip}
-            className={`text-[10px] font-medium px-1.5 py-0.5 rounded cursor-pointer transition-colors ${getEffectiveStatusClass(effectiveStatus)}`}
-          >
+          <button onClick={quarantined ? undefined : onToggleStatus} disabled={quarantined} title={statusTooltip} className={`text-[10px] font-medium px-1.5 py-0.5 rounded transition-colors ${quarantined ? "cursor-not-allowed" : "cursor-pointer"} ${getEffectiveStatusClass(effectiveStatus)}`}>
             {getEffectiveStatusLabel(effectiveStatus)}
           </button>
         </div>
