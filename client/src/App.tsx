@@ -12,7 +12,7 @@ import Home from "./pages/Home";
 
 const PricingPage = lazy(() => import("./pages/PricingPage"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
-const ProjectView = lazy(() => import("./pages/ProjectView"));
+const ProjectView = lazy(() => import("./pages/ProjectViewPaginated"));
 const LinkAnalytics = lazy(() => import("./pages/LinkAnalytics"));
 const ProjectAnalytics = lazy(() => import("./pages/ProjectAnalytics"));
 const CreateLink = lazy(() => import("./pages/CreateLink"));
