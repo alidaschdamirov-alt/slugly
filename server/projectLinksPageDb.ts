@@ -1,5 +1,5 @@
-import { and, asc, count, desc, eq, like, notInArray, or, sql } from "drizzle-orm";
-import { links } from "../drizzle/schema";
+import { and, asc, count, desc, eq, getTableColumns, like, notInArray, or, sql } from "drizzle-orm";
+import { clicks, links } from "../drizzle/schema";
 import { getDb } from "./dbCore";
 import { listTrash } from "./softDelete";
 
@@ -9,7 +9,7 @@ export interface ProjectLinksSqlPageInput {
   limit: number;
   search?: string;
   tag?: string;
-  sortField: "createdAt" | "shortCode";
+  sortField: "createdAt" | "shortCode" | "clicks";
   sortDir: "asc" | "desc";
 }
 
@@ -53,11 +53,16 @@ export async function queryProjectLinksSqlPage(input: ProjectLinksSqlPageInput) 
   const pageCount = Math.max(1, Math.ceil(total / input.limit));
   const page = Math.min(Math.max(1, input.page), pageCount);
 
-  const sortColumn = input.sortField === "shortCode" ? links.shortCode : links.createdAt;
-  const order = input.sortDir === "asc" ? asc(sortColumn) : desc(sortColumn);
+  const clickCount = sql<number>`(SELECT COUNT(*) FROM ${clicks} WHERE ${clicks.linkId} = ${links.id})`;
+  const sortExpression = input.sortField === "clicks"
+    ? clickCount
+    : input.sortField === "shortCode"
+      ? links.shortCode
+      : links.createdAt;
+  const order = input.sortDir === "asc" ? asc(sortExpression) : desc(sortExpression);
   const tieBreaker = input.sortDir === "asc" ? asc(links.id) : desc(links.id);
   const items = await database
-    .select()
+    .select({ ...getTableColumns(links), clickCount })
     .from(links)
     .where(and(...conditions))
     .orderBy(order, tieBreaker)
