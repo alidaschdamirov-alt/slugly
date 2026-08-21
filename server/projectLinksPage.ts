@@ -1,6 +1,7 @@
 import { getLinkStatus, type EffectiveLinkStatus } from "../shared/link-status";
 import * as db from "./db";
 import { getLinkQuarantineState } from "./linkQuarantine";
+import { queryProjectLinksSqlPage } from "./projectLinksPageDb";
 
 export type ProjectLinksSortField = "createdAt" | "clicks" | "shortCode";
 export type ProjectLinksSortDir = "asc" | "desc";
@@ -36,25 +37,72 @@ async function addEffectiveStatus<T extends {
   };
 }
 
+function paginationMeta(page: number, limit: number, total: number, pageCount: number) {
+  return {
+    page,
+    limit,
+    total,
+    pageCount,
+    hasPreviousPage: page > 1,
+    hasNextPage: page < pageCount,
+  };
+}
+
 export async function loadProjectLinksPage(input: ProjectLinksPageInput) {
   const project = await db.getProjectById(input.projectId);
   if (!project || project.userId !== input.userId) return null;
 
   const page = Math.max(1, Math.floor(input.page));
   const limit = Math.min(100, Math.max(1, Math.floor(input.limit)));
-  const search = (input.search || "").trim().toLowerCase();
+  const search = (input.search || "").trim();
   const tag = (input.tag || "").trim();
 
+  // Common path: page and filter in SQL so large projects do not have to load
+  // every link into Node just to render one 50-row page.
+  if (!input.status && input.sortField !== "clicks") {
+    const sqlPage = await queryProjectLinksSqlPage({
+      projectId: input.projectId,
+      page,
+      limit,
+      search,
+      tag,
+      sortField: input.sortField,
+      sortDir: input.sortDir,
+    });
+    const pageItems = await Promise.all(sqlPage.items.map(addEffectiveStatus));
+    const clickCounts = pageItems.length > 0
+      ? await db.getClickCountsByLinkIds(pageItems.map(link => link.id))
+      : {};
+
+    return {
+      projectId: input.projectId,
+      items: pageItems.map(link => ({ ...link, clickCount: clickCounts[link.id] || 0 })),
+      pagination: paginationMeta(sqlPage.page, limit, sqlPage.total, sqlPage.pageCount),
+      filters: {
+        allTags: sqlPage.allTags,
+        search: search.toLowerCase(),
+        tag: tag || null,
+        status: null,
+        sortField: input.sortField,
+        sortDir: input.sortDir,
+      },
+    };
+  }
+
+  // Effective security statuses (broken/quarantine) are partly stored outside
+  // the links table, and global click sorting needs aggregation. Keep the
+  // compatibility path for those explicit filters while the normal view stays SQL-paged.
   const projectLinks = await db.getLinksByProjectId(input.projectId);
   const allTags = Array.from(new Set(
     projectLinks.flatMap(link => Array.isArray(link.tags) ? link.tags : [])
   )).sort((a, b) => a.localeCompare(b));
+  const normalizedSearch = search.toLowerCase();
 
   let candidates = projectLinks.filter(link => {
     if (tag && !(Array.isArray(link.tags) && link.tags.includes(tag))) return false;
-    if (!search) return true;
+    if (!normalizedSearch) return true;
     return [link.shortCode, link.destinationUrl, link.title, link.utmSource, link.utmCampaign]
-      .some(value => String(value || "").toLowerCase().includes(search));
+      .some(value => String(value || "").toLowerCase().includes(normalizedSearch));
   });
 
   if (input.status) {
@@ -96,17 +144,10 @@ export async function loadProjectLinksPage(input: ProjectLinksPageInput) {
   return {
     projectId: input.projectId,
     items: pageItems.map(link => ({ ...link, clickCount: clickCounts[link.id] || 0 })),
-    pagination: {
-      page: safePage,
-      limit,
-      total,
-      pageCount,
-      hasPreviousPage: safePage > 1,
-      hasNextPage: safePage < pageCount,
-    },
+    pagination: paginationMeta(safePage, limit, total, pageCount),
     filters: {
       allTags,
-      search,
+      search: normalizedSearch,
       tag: tag || null,
       status: input.status || null,
       sortField: input.sortField,
