@@ -1,12 +1,12 @@
 import type { Express } from "express";
-import { resolveStoragePath, verifyStorageSignature } from "../storage";
+import {
+  isPrivateStorageKey,
+  resolveStoragePath,
+  verifyStorageSignature,
+} from "../storage";
 
 function routeKey(params: Record<string, string>): string | undefined {
   return params[0];
-}
-
-function isPrivateStorageKey(key: string): boolean {
-  return key.startsWith("backups/") || key.startsWith("reports/");
 }
 
 export function registerStorageRoutes(app: Express) {
