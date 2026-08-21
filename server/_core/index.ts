@@ -16,6 +16,7 @@ import { redirectRouter } from "../redirect";
 import { quarantineGuardRouter } from "../quarantineGuard";
 import { securityStateRouter } from "../securityStateApi";
 import { systemHealthRouter } from "../systemHealthApi";
+import { abuseWorkflowRouter } from "../abuseWorkflowApi";
 import { backgroundJobTelemetryMiddleware, systemHealthMetricsMiddleware } from "../systemHealth";
 import { impersonationRouter } from "../impersonationApi";
 import { resolveImpersonation } from "../impersonation";
@@ -114,6 +115,7 @@ async function startServer() {
 
   app.use("/api/security", securityStateRouter);
   app.use("/api/system-health", systemHealthRouter);
+  app.use("/api/abuse-workflow", abuseWorkflowRouter);
 
   app.get("/healthz", (_req, res) => {
     res.json({ status: "ok", uptime: process.uptime(), timestamp: Date.now() });
