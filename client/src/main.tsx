@@ -2,7 +2,6 @@ import * as Sentry from "@sentry/react";
 import { ClerkProvider } from "@clerk/react";
 import { trpc } from "@/lib/trpc";
 import { injectAdminReasons } from "@/lib/adminReasonTransport";
-import ImpersonationBanner from "@/components/ImpersonationBanner";
 import { UNAUTHED_ERR_MSG } from "@shared/const";
 
 const sentryDsn = import.meta.env.VITE_SENTRY_DSN;
@@ -62,6 +61,25 @@ function requestUrl(input: RequestInfo | URL) {
   return input.url;
 }
 
+async function confirmCleanupPreview() {
+  const response = await globalThis.fetch("/api/security/dangerous-actions/cleanup-expired/preview", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.error || "Could not prepare Cleanup Expired preview.");
+  const items = Array.isArray(data?.items) ? data.items : [];
+  const sample = items.slice(0, 12).map((item: any) => `• /r/${item.shortCode}`).join("\n");
+  const more = Number(data?.count || 0) > items.slice(0, 12).length
+    ? `\n…and ${Number(data.count) - items.slice(0, 12).length} more.`
+    : "";
+  const confirmed = window.confirm(
+    `Cleanup Expired preview\n\n${Number(data?.count || 0)} expired anonymous link(s) will be moved to Trash for 30 days — not permanently deleted.\n\n${sample || "No matching links."}${more}\n\nContinue?`
+  );
+  if (!confirmed) throw new Error("Cleanup Expired canceled after preview.");
+}
+
 const trpcClient = trpc.createClient({
   links: [
     httpBatchLink({
@@ -71,20 +89,20 @@ const trpcClient = trpc.createClient({
         const wsId = localStorage.getItem("slugly_workspace_id");
         return wsId ? { "x-workspace-id": wsId } : {};
       },
-      fetch(input, init) {
+      async fetch(input, init) {
         let nextInit = init;
+        const url = requestUrl(input);
         if (typeof window !== "undefined" && typeof init?.body === "string") {
           try {
             const nextBody = injectAdminReasons(
-              requestUrl(input),
+              url,
               init.body,
               label => window.prompt(`${label}:\n\nThis reason will be stored in the Slugly audit log.`)
             );
-            if (nextBody !== init.body) {
-              nextInit = { ...init, body: nextBody as BodyInit };
-            }
+            if (nextBody !== init.body) nextInit = { ...init, body: nextBody as BodyInit };
+            if (url.includes("admin.cleanupExpiredAnonymous")) await confirmCleanupPreview();
           } catch (error: any) {
-            window.alert(error?.message || "Administrative action canceled.");
+            if (error?.message && !error.message.includes("canceled")) window.alert(error.message);
             return Promise.reject(error);
           }
         }
@@ -102,7 +120,6 @@ createRoot(document.getElementById("root")!).render(
   <ClerkProvider publishableKey={clerkPublishableKey} afterSignOutUrl="/">
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
-        <ImpersonationBanner />
         <App />
       </QueryClientProvider>
     </trpc.Provider>
