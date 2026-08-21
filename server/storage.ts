@@ -1,5 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ENV } from "./_core/env";
 
@@ -79,6 +79,25 @@ export async function storageGet(
 ): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
   return { key, url: publicUrl(key) };
+}
+
+export async function storageRead(relKey: string): Promise<Buffer> {
+  return readFile(resolveStoragePath(relKey));
+}
+
+export async function storageStat(relKey: string): Promise<{ size: number; mtimeMs: number }> {
+  const info = await stat(resolveStoragePath(relKey));
+  return { size: info.size, mtimeMs: info.mtimeMs };
+}
+
+export async function storageDelete(relKey: string): Promise<boolean> {
+  try {
+    await unlink(resolveStoragePath(relKey));
+    return true;
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 export async function storageGetSignedUrl(relKey: string): Promise<string> {
