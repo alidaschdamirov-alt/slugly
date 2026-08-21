@@ -169,6 +169,13 @@ export async function getClickStats(linkId: number) {
   return { ...stats, uniqueClicks: counts.unique };
 }
 
+// User-facing deletion follows the same 30-day Trash contract as admin deletion.
+// Permanent removal remains an internal purge/cascade concern in dbCore/softDelete.
+export async function deleteLink(linkId: number) {
+  const { softDeleteLink } = await import("./softDelete");
+  await softDeleteLink(linkId);
+}
+
 export async function adminDeleteLink(linkId: number) {
   const { softDeleteLink } = await import("./softDelete");
   await softDeleteLink(linkId);
