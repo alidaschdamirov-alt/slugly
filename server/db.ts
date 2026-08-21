@@ -3,6 +3,28 @@
 import * as core from "./dbCore";
 export * from "./dbCore";
 
+async function filterTrashLinks<T extends { id: number }>(rows: T[]): Promise<T[]> {
+  const { isLinkSoftDeleted } = await import("./softDelete");
+  const deleted = await Promise.all(rows.map(row => isLinkSoftDeleted(row.id)));
+  return rows.filter((_row, index) => !deleted[index]);
+}
+
+export async function getLinksByUserId(...args: Parameters<typeof core.getLinksByUserId>) {
+  return filterTrashLinks(await core.getLinksByUserId(...args));
+}
+
+export async function getUnassignedLinks(...args: Parameters<typeof core.getUnassignedLinks>) {
+  return filterTrashLinks(await core.getUnassignedLinks(...args));
+}
+
+export async function getLinksByProjectId(...args: Parameters<typeof core.getLinksByProjectId>) {
+  return filterTrashLinks(await core.getLinksByProjectId(...args));
+}
+
+export async function getLinksByTag(...args: Parameters<typeof core.getLinksByTag>) {
+  return filterTrashLinks(await core.getLinksByTag(...args));
+}
+
 export async function adminDeleteLink(linkId: number) {
   const { softDeleteLink } = await import("./softDelete");
   await softDeleteLink(linkId);
