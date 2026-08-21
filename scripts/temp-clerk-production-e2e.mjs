@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-import { clerk } from '@clerk/testing/playwright';
+import { clerk, clerkSetup } from '@clerk/testing/playwright';
 import { createTRPCClient, httpBatchLink } from '@trpc/client';
 import superjson from 'superjson';
 import fs from 'node:fs/promises';
@@ -55,6 +55,9 @@ try {
   assert(health.commit === expectedCommit, `health commit ${health.commit} != ${expectedCommit}`);
   assert(String(health.runtime || '').startsWith('v24.'), `runtime ${health.runtime} is not Node 24`);
   pass('healthz', { commit: health.commit, runtime: health.runtime });
+
+  await clerkSetup();
+  pass('clerk-testing-token-setup');
 
   browser = await chromium.launch({ headless: true });
   context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -153,8 +156,6 @@ try {
   assert(projectList.some(item => item.id === projectId), 'created project missing from authenticated API');
   pass('authenticated-trpc');
 
-  // Seed exactly 50 additional active links through the same production tRPC API.
-  // Together with the UI-created link this forces ProjectView onto two pages (50 + 1).
   for (let start = 0; start < 50; start += 5) {
     const batch = Array.from({ length: Math.min(5, 50 - start) }, (_, offset) => start + offset + 1);
     const created = await Promise.all(batch.map(i => apiClient.link.create.mutate({
@@ -300,8 +301,6 @@ try {
   diagnostics.push({ failure: error instanceof Error ? error.message : String(error) });
   if (page) await shot(page, 'FAIL-current-page');
 } finally {
-  // Best-effort production cleanup. Slugly deletion is intentionally soft-delete,
-  // so these records enter the 30-day Trash retention path instead of remaining active.
   if (apiClient && createdLinkIds.length) {
     let deleted = 0;
     for (const id of createdLinkIds) {
