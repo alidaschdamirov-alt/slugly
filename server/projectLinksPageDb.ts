@@ -11,6 +11,10 @@ export interface ProjectLinksSqlPageInput {
   tag?: string;
   sortField: "createdAt" | "shortCode" | "clicks";
   sortDir: "asc" | "desc";
+  meta?: {
+    total: number;
+    allTags: string[];
+  };
 }
 
 async function getSoftDeletedLinkIds() {
@@ -45,11 +49,14 @@ export async function queryProjectLinksSqlPage(input: ProjectLinksSqlPageInput) 
 
   const deletedIds = await getSoftDeletedLinkIds();
   const conditions = buildConditions(input, deletedIds);
-  const [totalRow] = await database
-    .select({ value: count() })
-    .from(links)
-    .where(and(...conditions));
-  const total = Number(totalRow?.value || 0);
+  let total = input.meta?.total;
+  if (total === undefined) {
+    const [totalRow] = await database
+      .select({ value: count() })
+      .from(links)
+      .where(and(...conditions));
+    total = Number(totalRow?.value || 0);
+  }
   const pageCount = Math.max(1, Math.ceil(total / input.limit));
   const page = Math.min(Math.max(1, input.page), pageCount);
 
@@ -69,15 +76,18 @@ export async function queryProjectLinksSqlPage(input: ProjectLinksSqlPageInput) 
     .limit(input.limit)
     .offset((page - 1) * input.limit);
 
-  const tagConditions = [eq(links.projectId, input.projectId)];
-  if (deletedIds.length > 0) tagConditions.push(notInArray(links.id, deletedIds));
-  const tagRows = await database
-    .select({ tags: links.tags })
-    .from(links)
-    .where(and(...tagConditions));
-  const allTags = Array.from(new Set(
-    tagRows.flatMap(row => Array.isArray(row.tags) ? row.tags : [])
-  )).sort((a, b) => a.localeCompare(b));
+  let allTags = input.meta?.allTags;
+  if (!allTags) {
+    const tagConditions = [eq(links.projectId, input.projectId)];
+    if (deletedIds.length > 0) tagConditions.push(notInArray(links.id, deletedIds));
+    const tagRows = await database
+      .select({ tags: links.tags })
+      .from(links)
+      .where(and(...tagConditions));
+    allTags = Array.from(new Set(
+      tagRows.flatMap(row => Array.isArray(row.tags) ? row.tags : [])
+    )).sort((a, b) => a.localeCompare(b));
+  }
 
   return { items, total, page, pageCount, allTags };
 }
