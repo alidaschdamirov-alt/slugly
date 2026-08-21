@@ -193,7 +193,7 @@ export default function QrCodesPage() {
           url={getQrUrl(selectedLink)}
           title={selectedLink.shortCode}
           isBroken={getEffectiveLinkStatus(selectedLink) === "broken"}
-          isQuarantined={getEffectiveLinkStatus(selectedLink) === "quarantine"}
+          isQuarantined={selectedLink.quarantine?.quarantined === true}
           quarantineReason={selectedLink.quarantine?.reason}
           onEditDestination={openEditFromQr}
         />
