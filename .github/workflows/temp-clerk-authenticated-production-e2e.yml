@@ -42,6 +42,7 @@ jobs:
           mkdir -p /tmp/slugly-clerk-e2e/screens
           cp scripts/temp-clerk-production-e2e-v3.mjs /tmp/slugly-clerk-e2e/e2e.mjs
           sed -i "s#await page.getByRole('button', { name: /Add Link/i }).click();#await page.getByRole('button', { name: /Add Link/i }).first().click();#" /tmp/slugly-clerk-e2e/e2e.mjs
+          sed -i "s#assert(!(await submit.isDisabled()), 'Create Short Link button is disabled before submit');#for (let wait = 0; wait < 40 \&\& await submit.isDisabled(); wait += 1) await sleep(250); assert(!(await submit.isDisabled()), 'Create Short Link button stayed disabled after workspace load wait');#" /tmp/slugly-clerk-e2e/e2e.mjs
           cd /tmp/slugly-clerk-e2e
           npm init -y >/dev/null 2>&1
           npm install --no-audit --no-fund playwright@1.55.0 @playwright/test@1.55.0 @clerk/testing@latest @trpc/client@11.6.0 superjson@1.13.3
