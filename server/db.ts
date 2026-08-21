@@ -13,6 +13,8 @@ export async function adminDeleteUser(userId: number) {
 }
 
 export async function adminCleanupExpiredAnonymous() {
+  const { consumeCleanupPreviewGate } = await import("./cleanupPreviewGate");
   const { softDeleteExpiredAnonymous } = await import("./softDelete");
+  await consumeCleanupPreviewGate();
   return softDeleteExpiredAnonymous();
 }
