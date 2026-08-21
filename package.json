@@ -12,6 +12,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "safe-browsing:rescan": "tsx scripts/rescan-safe-browsing.ts",
+    "backup:test-restore": "tsx scripts/test-latest-backup.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push"
