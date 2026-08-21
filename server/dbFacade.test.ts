@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   coreDeleteUser: vi.fn(),
   coreCleanup: vi.fn(),
   coreWriteAudit: vi.fn(),
+  coreGetClickStats: vi.fn(),
+  coreGetClickCountFiltered: vi.fn(),
   softDeleteLink: vi.fn(),
   softDeleteUser: vi.fn(),
   softDeleteExpiredAnonymous: vi.fn(),
@@ -16,6 +18,8 @@ vi.mock("./dbCore", () => ({
   adminDeleteUser: mocks.coreDeleteUser,
   adminCleanupExpiredAnonymous: mocks.coreCleanup,
   writeAuditLog: mocks.coreWriteAudit,
+  getClickStats: mocks.coreGetClickStats,
+  getClickCountByLinkIdFiltered: mocks.coreGetClickCountFiltered,
 }));
 
 vi.mock("./softDelete", () => ({
@@ -34,6 +38,8 @@ describe("database safety facade", () => {
     mocks.softDeleteExpiredAnonymous.mockResolvedValue(3);
     mocks.consumeCleanupPreviewGate.mockResolvedValue({ count: 3 });
     mocks.coreWriteAudit.mockResolvedValue(undefined);
+    mocks.coreGetClickStats.mockResolvedValue({ countries: [], devices: [], browsers: [], referrers: [] });
+    mocks.coreGetClickCountFiltered.mockResolvedValue({ total: 12, unique: 7 });
   });
 
   it("routes legacy admin link deletion to soft delete only", async () => {
@@ -77,5 +83,19 @@ describe("database safety facade", () => {
     await db.writeAuditLog({ actorId: 1, actorName: "Admin", action: "link.delete", targetType: "link", targetId: "12", metadata: {} });
     await db.writeAuditLog({ actorId: 1, actorName: "Admin", action: "links.cleanup_expired", targetType: "system", targetId: null, metadata: {} });
     expect(mocks.coreWriteAudit).not.toHaveBeenCalled();
+  });
+
+  it("adds filtered unique clicks to link analytics stats", async () => {
+    vi.resetModules();
+    const db = await import("./db");
+    await expect(db.getClickStats(12)).resolves.toEqual({
+      countries: [],
+      devices: [],
+      browsers: [],
+      referrers: [],
+      uniqueClicks: 7,
+    });
+    expect(mocks.coreGetClickStats).toHaveBeenCalledWith(12);
+    expect(mocks.coreGetClickCountFiltered).toHaveBeenCalledWith(12, true);
   });
 });
