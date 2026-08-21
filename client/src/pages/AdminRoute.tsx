@@ -1,6 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Loader2 } from "lucide-react";
 import AbuseOperationsPanel from "./AbuseOperationsPanel";
+import AdminAuditExplorerPanel from "./AdminAuditExplorerPanel";
 import AdminIpAllowlistPanel from "./AdminIpAllowlistPanel";
 import AdminPanelWithSecurity from "./AdminPanelWithSecurity";
 import AdminTrashPanel from "./AdminTrashPanel";
@@ -30,6 +31,7 @@ export default function AdminRoute() {
         <AdminTrashPanel />
         <EmailDeliverabilityPanel />
         <BackupOperationsPanel />
+        <AdminAuditExplorerPanel />
         <PrivilegedSessionsPanel />
         <AdminIpAllowlistPanel />
         <SystemHealthPanel />
