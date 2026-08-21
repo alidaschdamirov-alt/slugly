@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getLinksByProjectId: vi.fn(),
   getClickCountsByLinkIds: vi.fn(),
   getLinkQuarantineState: vi.fn(),
+  queryProjectLinksSqlPage: vi.fn(),
 }));
 
 vi.mock("./db", () => ({
@@ -15,6 +16,10 @@ vi.mock("./db", () => ({
 
 vi.mock("./linkQuarantine", () => ({
   getLinkQuarantineState: mocks.getLinkQuarantineState,
+}));
+
+vi.mock("./projectLinksPageDb", () => ({
+  queryProjectLinksSqlPage: mocks.queryProjectLinksSqlPage,
 }));
 
 function makeLink(id: number) {
@@ -40,18 +45,48 @@ function makeLink(id: number) {
   };
 }
 
+const allLinks = Array.from({ length: 120 }, (_, index) => makeLink(index + 1));
+
+function mockSqlPage(input: any) {
+  const search = String(input.search || "").toLowerCase();
+  const tag = String(input.tag || "");
+  let rows = allLinks.filter(link => {
+    if (tag && !link.tags.includes(tag)) return false;
+    if (!search) return true;
+    return [link.shortCode, link.destinationUrl, link.title, link.utmSource, link.utmCampaign]
+      .some(value => String(value || "").toLowerCase().includes(search));
+  });
+  rows = rows.sort((a, b) => {
+    const comparison = input.sortField === "shortCode"
+      ? a.shortCode.localeCompare(b.shortCode)
+      : new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    return input.sortDir === "asc" ? comparison : -comparison;
+  });
+  const total = rows.length;
+  const pageCount = Math.max(1, Math.ceil(total / input.limit));
+  const page = Math.min(input.page, pageCount);
+  return {
+    items: rows.slice((page - 1) * input.limit, page * input.limit),
+    total,
+    page,
+    pageCount,
+    allTags: ["organic", "paid", "summer"],
+  };
+}
+
 describe("project links page service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getProjectById.mockResolvedValue({ id: 10, userId: 7, name: "Project" });
-    mocks.getLinksByProjectId.mockResolvedValue(Array.from({ length: 120 }, (_, index) => makeLink(index + 1)));
+    mocks.getLinksByProjectId.mockResolvedValue(allLinks);
+    mocks.queryProjectLinksSqlPage.mockImplementation(async input => mockSqlPage(input));
     mocks.getClickCountsByLinkIds.mockImplementation(async (ids: number[]) => Object.fromEntries(ids.map(id => [id, id * 10])));
     mocks.getLinkQuarantineState.mockImplementation(async (id: number) => id === 3
       ? { quarantined: true, reason: "Malware", threatTypes: ["MALWARE"], source: "scheduled-rescan", createdAt: 1, updatedAt: 1 }
       : null);
   });
 
-  it("returns 50 rows per page with stable totals and distinct page boundaries", async () => {
+  it("returns 50 rows per page through SQL paging without a full project scan", async () => {
     vi.resetModules();
     const { loadProjectLinksPage } = await import("./projectLinksPage");
     const first = await loadProjectLinksPage({ userId: 7, projectId: 10, page: 1, limit: 50, sortField: "createdAt", sortDir: "asc" });
@@ -63,9 +98,11 @@ describe("project links page service", () => {
     expect(second?.items).toHaveLength(50);
     expect(first?.items[0].id).toBe(1);
     expect(second?.items[0].id).toBe(51);
+    expect(mocks.queryProjectLinksSqlPage).toHaveBeenCalledTimes(2);
+    expect(mocks.getLinksByProjectId).not.toHaveBeenCalled();
   });
 
-  it("applies search and tag filters before pagination", async () => {
+  it("pushes search and tag filters into the SQL page query", async () => {
     vi.resetModules();
     const { loadProjectLinksPage } = await import("./projectLinksPage");
     const result = await loadProjectLinksPage({
@@ -82,9 +119,11 @@ describe("project links page service", () => {
     expect(result?.pagination.total).toBe(1);
     expect(result?.items[0].id).toBe(30);
     expect(result?.filters.allTags).toEqual(["organic", "paid", "summer"]);
+    expect(mocks.queryProjectLinksSqlPage).toHaveBeenCalledWith(expect.objectContaining({ search: "campaign 30", tag: "paid" }));
+    expect(mocks.getLinksByProjectId).not.toHaveBeenCalled();
   });
 
-  it("uses shared effective status including quarantine", async () => {
+  it("uses the compatibility scan for shared effective status including quarantine", async () => {
     vi.resetModules();
     const { loadProjectLinksPage } = await import("./projectLinksPage");
     const result = await loadProjectLinksPage({
@@ -99,13 +138,16 @@ describe("project links page service", () => {
 
     expect(result?.pagination.total).toBe(1);
     expect(result?.items[0]).toMatchObject({ id: 3, effectiveStatus: "quarantine", quarantineReason: "Malware" });
+    expect(mocks.getLinksByProjectId).toHaveBeenCalledWith(10);
+    expect(mocks.queryProjectLinksSqlPage).not.toHaveBeenCalled();
   });
 
-  it("sorts by click count and only exposes the requested user's project", async () => {
+  it("uses compatibility scan for global click sorting and enforces project ownership", async () => {
     vi.resetModules();
     const { loadProjectLinksPage } = await import("./projectLinksPage");
     const result = await loadProjectLinksPage({ userId: 7, projectId: 10, page: 1, limit: 3, sortField: "clicks", sortDir: "desc" });
     expect(result?.items.map(item => item.id)).toEqual([120, 119, 118]);
+    expect(mocks.getLinksByProjectId).toHaveBeenCalledWith(10);
 
     const forbidden = await loadProjectLinksPage({ userId: 999, projectId: 10, page: 1, limit: 50, sortField: "createdAt", sortDir: "desc" });
     expect(forbidden).toBeNull();
