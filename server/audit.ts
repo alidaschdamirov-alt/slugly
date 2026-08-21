@@ -88,18 +88,18 @@ const REQUIRED_ADMIN_REASON_AUDIT: Record<string, AdminAuditDescriptor> = {
     payload: () => ({ source: "central-reason-policy", action: "ban" }),
   },
   "admin.deleteUser": {
-    event: AUDIT_EVENTS.USER_DELETE,
+    event: AUDIT_EVENTS.USER_SOFT_DELETE,
     targetType: "user",
     targetId: input => typeof input.id === "number" ? input.id : null,
     reasonField: "reason",
-    payload: () => ({ source: "central-reason-policy" }),
+    payload: () => ({ source: "central-reason-policy", recoveryWindowDays: 30 }),
   },
   "admin.deleteLink": {
-    event: AUDIT_EVENTS.LINK_DELETE,
+    event: AUDIT_EVENTS.LINK_SOFT_DELETE,
     targetType: "link",
     targetId: input => typeof input.id === "number" ? input.id : null,
     reasonField: "reason",
-    payload: () => ({ source: "central-reason-policy" }),
+    payload: () => ({ source: "central-reason-policy", recoveryWindowDays: 30 }),
   },
   "admin.cleanupExpiredAnonymous": {
     event: AUDIT_EVENTS.LINK_BULK_CLEANUP,
@@ -108,6 +108,7 @@ const REQUIRED_ADMIN_REASON_AUDIT: Record<string, AdminAuditDescriptor> = {
     reasonField: "reason",
     payload: (_input, result: any) => ({
       source: "central-reason-policy",
+      recoveryWindowDays: 30,
       count: typeof result?.count === "number" ? result.count : undefined,
     }),
   },
