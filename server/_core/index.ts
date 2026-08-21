@@ -16,6 +16,21 @@ const originalJson = express.json;
   });
 };
 
+// Keep /healthz public and lightweight, but include the immutable deploy SHA so
+// release automation can prove that Render is serving the exact main commit.
+const originalResponseJson = express.response.json;
+(express.response as any).json = function healthAwareJson(body: unknown) {
+  const requestPath = (this as any)?.req?.path;
+  const nextBody = requestPath === "/healthz" && body && typeof body === "object" && !Array.isArray(body)
+    ? {
+        ...(body as Record<string, unknown>),
+        commit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || null,
+        runtime: process.version,
+      }
+    : body;
+  return originalResponseJson.call(this, nextBody as any);
+};
+
 async function bootstrap() {
   await import("./indexCore");
   const { startBackupSchedulerWithTelemetry } = await import("../backupScheduler");
