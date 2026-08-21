@@ -1,6 +1,7 @@
 import { normalizeDestinationUrl } from "./validation/destination-url";
 
 export type EffectiveLinkStatus = "active" | "paused" | "scheduled" | "expired" | "broken" | "quarantine";
+export type NonQuarantineLinkStatus = Exclude<EffectiveLinkStatus, "quarantine">;
 
 /**
  * UI maps created before security quarantine used Record<LinkStatus, ...>.
@@ -18,6 +19,10 @@ export interface LinkStatusInput {
   quarantined?: boolean | number | null;
 }
 
+type NonQuarantineInput = Omit<LinkStatusInput, "quarantined"> & {
+  quarantined?: false | 0 | null | undefined;
+};
+
 function toTimestamp(value: number | string | Date | null | undefined): number | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -31,6 +36,8 @@ export function isBrokenDestination(link: LinkStatusInput): boolean {
   return normalizeDestinationUrl(link.destinationUrl) === null;
 }
 
+export function getLinkStatus(link: NonQuarantineInput, now?: number): NonQuarantineLinkStatus;
+export function getLinkStatus(link: LinkStatusInput, now?: number): EffectiveLinkStatus;
 export function getLinkStatus(link: LinkStatusInput, now = Date.now()): EffectiveLinkStatus {
   if (link.quarantined === true || link.quarantined === 1) return "quarantine";
   if (isBrokenDestination(link)) return "broken";
