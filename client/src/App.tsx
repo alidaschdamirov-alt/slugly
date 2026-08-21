@@ -2,79 +2,92 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch, useLocation } from "wouter";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ImpersonationBanner from "./components/ImpersonationBanner";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import CookieConsent from "./components/CookieConsent";
 import { initAnalytics, trackEvent, trackPageView } from "@/lib/analytics";
 import Home from "./pages/Home";
-import PricingPage from "./pages/PricingPage";
-import Dashboard from "./pages/Dashboard";
-import ProjectView from "./pages/ProjectView";
-import LinkAnalytics from "./pages/LinkAnalytics";
-import ProjectAnalytics from "./pages/ProjectAnalytics";
-import CreateLink from "./pages/CreateLink";
-import BulkCreate from "./pages/BulkCreate";
-import DomainsPage from "./pages/DomainsPage";
-import BillingPage from "./pages/BillingPage";
-import TagsPage from "./pages/TagsPage";
-import TagAnalytics from "./pages/TagAnalytics";
-import QrCodesPage from "./pages/QrCodesPage";
-import ReportPage from "./pages/ReportPage";
-import AuthPage from "./pages/AuthPage";
-import AdminRoute from "./pages/AdminRoute";
-import AppealsPage from "./pages/AppealsPage";
-import PrivacySettings from "./pages/PrivacySettings";
-import { TermsPage, PrivacyPage, AupPage } from "./pages/LegalPages";
-import Team from "./pages/Team";
-import InviteAccept from "./pages/InviteAccept";
-import UtmTemplates from "./pages/UtmTemplates";
-import LinkRules from "./pages/LinkRules";
-import CampaignDashboard from "./pages/CampaignDashboard";
-import WhiteLabelReport from "./pages/WhiteLabelReport";
-import ProjectComparison from "./pages/ProjectComparison";
-import TagComparison from "./pages/TagComparison";
-import ExportReport from "./pages/ExportReport";
+
+const PricingPage = lazy(() => import("./pages/PricingPage"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const ProjectView = lazy(() => import("./pages/ProjectView"));
+const LinkAnalytics = lazy(() => import("./pages/LinkAnalytics"));
+const ProjectAnalytics = lazy(() => import("./pages/ProjectAnalytics"));
+const CreateLink = lazy(() => import("./pages/CreateLink"));
+const BulkCreate = lazy(() => import("./pages/BulkCreate"));
+const DomainsPage = lazy(() => import("./pages/DomainsPage"));
+const BillingPage = lazy(() => import("./pages/BillingPage"));
+const TagsPage = lazy(() => import("./pages/TagsPage"));
+const TagAnalytics = lazy(() => import("./pages/TagAnalytics"));
+const QrCodesPage = lazy(() => import("./pages/QrCodesPage"));
+const ReportPage = lazy(() => import("./pages/ReportPage"));
+const AuthPage = lazy(() => import("./pages/AuthPage"));
+const AdminRoute = lazy(() => import("./pages/AdminRoute"));
+const AppealsPage = lazy(() => import("./pages/AppealsPage"));
+const PrivacySettings = lazy(() => import("./pages/PrivacySettings"));
+const Team = lazy(() => import("./pages/Team"));
+const InviteAccept = lazy(() => import("./pages/InviteAccept"));
+const UtmTemplates = lazy(() => import("./pages/UtmTemplates"));
+const LinkRules = lazy(() => import("./pages/LinkRules"));
+const CampaignDashboard = lazy(() => import("./pages/CampaignDashboard"));
+const WhiteLabelReport = lazy(() => import("./pages/WhiteLabelReport"));
+const ProjectComparison = lazy(() => import("./pages/ProjectComparison"));
+const TagComparison = lazy(() => import("./pages/TagComparison"));
+const ExportReport = lazy(() => import("./pages/ExportReport"));
+const TermsPage = lazy(() => import("./pages/LegalPages").then(module => ({ default: module.TermsPage })));
+const PrivacyPage = lazy(() => import("./pages/LegalPages").then(module => ({ default: module.PrivacyPage })));
+const AupPage = lazy(() => import("./pages/LegalPages").then(module => ({ default: module.AupPage })));
+
+function RouteFallback() {
+  return (
+    <div className="flex min-h-[50vh] items-center justify-center" aria-live="polite" aria-busy="true">
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-primary" />
+    </div>
+  );
+}
 
 function AppRoutes() {
   return (
-    <Switch>
-      <Route path="/" component={Home} />
-      <Route path="/pricing" component={PricingPage} />
-      <Route path="/auth" component={AuthPage} />
-      <Route path="/dashboard" component={Dashboard} />
-      <Route path="/project/:id" component={ProjectView} />
-      <Route path="/project/:id/analytics" component={ProjectAnalytics} />
-      <Route path="/link/:id/analytics" component={LinkAnalytics} />
-      <Route path="/link/:linkId/rules" component={LinkRules} />
-      <Route path="/create" component={CreateLink} />
-      <Route path="/links/new" component={CreateLink} />
-      <Route path="/create/bulk" component={BulkCreate} />
-      <Route path="/domains" component={DomainsPage} />
-      <Route path="/billing" component={BillingPage} />
-      <Route path="/tags" component={TagsPage} />
-      <Route path="/tags/compare" component={TagComparison} />
-      <Route path="/tags/:tag" component={TagAnalytics} />
-      <Route path="/qr" component={QrCodesPage} />
-      <Route path="/report" component={ReportPage} />
-      <Route path="/reports" component={ExportReport} />
-      <Route path="/team" component={Team} />
-      <Route path="/utm-templates" component={UtmTemplates} />
-      <Route path="/campaigns" component={CampaignDashboard} />
-      <Route path="/compare" component={ProjectComparison} />
-      <Route path="/branding" component={WhiteLabelReport} />
-      <Route path="/export-report" component={ExportReport} />
-      <Route path="/appeals" component={AppealsPage} />
-      <Route path="/invite/:token" component={InviteAccept} />
-      <Route path="/admin" component={AdminRoute} />
-      <Route path="/privacy-settings" component={PrivacySettings} />
-      <Route path="/terms" component={TermsPage} />
-      <Route path="/privacy" component={PrivacyPage} />
-      <Route path="/aup" component={AupPage} />
-      <Route path="/404" component={NotFound} />
-      <Route component={NotFound} />
-    </Switch>
+    <Suspense fallback={<RouteFallback />}>
+      <Switch>
+        <Route path="/" component={Home} />
+        <Route path="/pricing" component={PricingPage} />
+        <Route path="/auth" component={AuthPage} />
+        <Route path="/dashboard" component={Dashboard} />
+        <Route path="/project/:id" component={ProjectView} />
+        <Route path="/project/:id/analytics" component={ProjectAnalytics} />
+        <Route path="/link/:id/analytics" component={LinkAnalytics} />
+        <Route path="/link/:linkId/rules" component={LinkRules} />
+        <Route path="/create" component={CreateLink} />
+        <Route path="/links/new" component={CreateLink} />
+        <Route path="/create/bulk" component={BulkCreate} />
+        <Route path="/domains" component={DomainsPage} />
+        <Route path="/billing" component={BillingPage} />
+        <Route path="/tags" component={TagsPage} />
+        <Route path="/tags/compare" component={TagComparison} />
+        <Route path="/tags/:tag" component={TagAnalytics} />
+        <Route path="/qr" component={QrCodesPage} />
+        <Route path="/report" component={ReportPage} />
+        <Route path="/reports" component={ExportReport} />
+        <Route path="/team" component={Team} />
+        <Route path="/utm-templates" component={UtmTemplates} />
+        <Route path="/campaigns" component={CampaignDashboard} />
+        <Route path="/compare" component={ProjectComparison} />
+        <Route path="/branding" component={WhiteLabelReport} />
+        <Route path="/export-report" component={ExportReport} />
+        <Route path="/appeals" component={AppealsPage} />
+        <Route path="/invite/:token" component={InviteAccept} />
+        <Route path="/admin" component={AdminRoute} />
+        <Route path="/privacy-settings" component={PrivacySettings} />
+        <Route path="/terms" component={TermsPage} />
+        <Route path="/privacy" component={PrivacyPage} />
+        <Route path="/aup" component={AupPage} />
+        <Route path="/404" component={NotFound} />
+        <Route component={NotFound} />
+      </Switch>
+    </Suspense>
   );
 }
 
