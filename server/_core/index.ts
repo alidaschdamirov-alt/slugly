@@ -17,5 +17,5 @@ const originalJson = express.json;
 };
 
 await import("./indexCore");
-const { startBackupScheduler } = await import("../backup");
-startBackupScheduler();
+const { startBackupSchedulerWithTelemetry } = await import("../backupScheduler");
+startBackupSchedulerWithTelemetry();
