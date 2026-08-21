@@ -32,6 +32,10 @@ function publicUrl(key: string): string {
   return `/storage/${key.split("/").map(encodeURIComponent).join("/")}`;
 }
 
+function isPrivateStorageKey(key: string): boolean {
+  return key.startsWith("backups/") || key.startsWith("reports/");
+}
+
 function signingSecret(): string {
   const secret =
     process.env.STORAGE_SIGNING_SECRET || process.env.CLERK_SECRET_KEY;
@@ -56,7 +60,12 @@ export async function storagePut(
 ): Promise<{ key: string; url: string }> {
   const key = appendHashSuffix(normalizeKey(relKey));
   await persist(key, data);
-  return { key, url: publicUrl(key) };
+  return {
+    key,
+    url: isPrivateStorageKey(key)
+      ? await storageGetSignedUrl(key)
+      : publicUrl(key),
+  };
 }
 
 export async function storagePutExact(
@@ -68,7 +77,7 @@ export async function storagePutExact(
   await persist(key, data);
   return {
     key,
-    url: key.startsWith("backups/")
+    url: isPrivateStorageKey(key)
       ? await storageGetSignedUrl(key)
       : publicUrl(key),
   };
@@ -78,7 +87,12 @@ export async function storageGet(
   relKey: string
 ): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
-  return { key, url: publicUrl(key) };
+  return {
+    key,
+    url: isPrivateStorageKey(key)
+      ? await storageGetSignedUrl(key)
+      : publicUrl(key),
+  };
 }
 
 export async function storageRead(relKey: string): Promise<Buffer> {
