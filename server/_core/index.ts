@@ -16,6 +16,13 @@ const originalJson = express.json;
   });
 };
 
-await import("./indexCore");
-const { startBackupSchedulerWithTelemetry } = await import("../backupScheduler");
-startBackupSchedulerWithTelemetry();
+async function bootstrap() {
+  await import("./indexCore");
+  const { startBackupSchedulerWithTelemetry } = await import("../backupScheduler");
+  startBackupSchedulerWithTelemetry();
+}
+
+void bootstrap().catch(error => {
+  console.error("[Bootstrap] Failed to start Slugly:", error);
+  process.exitCode = 1;
+});
