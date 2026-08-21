@@ -63,8 +63,9 @@ async function loadRows(req: Request, limit: number, offset: number) {
   if (!database) throw new Error("Database unavailable");
   const conditions = filters(req);
   const where = conditions.length > 0 ? and(...conditions) : undefined;
-  const base = database.select().from(auditLog).orderBy(desc(auditLog.createdAt)).limit(limit).offset(offset);
-  const rows = where ? await base.where(where) : await base;
+  const rows = where
+    ? await database.select().from(auditLog).where(where).orderBy(desc(auditLog.createdAt)).limit(limit).offset(offset)
+    : await database.select().from(auditLog).orderBy(desc(auditLog.createdAt)).limit(limit).offset(offset);
   return rows.map(row => {
     const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {};
     return {
@@ -86,17 +87,12 @@ auditExplorerRouter.get("/", async (req, res) => {
     const page = Math.max(1, Number(req.query.page) || 1);
     const conditions = filters(req);
     const where = conditions.length > 0 ? and(...conditions) : undefined;
-    const countQuery = database.select({ count: count() }).from(auditLog);
-    const [totalRow] = where ? await countQuery.where(where) : await countQuery;
+    const [totalRow] = where
+      ? await database.select({ count: count() }).from(auditLog).where(where)
+      : await database.select({ count: count() }).from(auditLog);
     const total = Number(totalRow?.count || 0);
     const rows = await loadRows(req, pageSize, (page - 1) * pageSize);
-    return res.json({
-      rows,
-      page,
-      pageSize,
-      total,
-      totalPages: Math.max(1, Math.ceil(total / pageSize)),
-    });
+    return res.json({ rows, page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) });
   } catch (error: any) {
     return res.status(500).json({ error: error?.message || "Failed to load audit log" });
   }
