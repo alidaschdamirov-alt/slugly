@@ -57,16 +57,21 @@ function mockSqlPage(input: any) {
       .some(value => String(value || "").toLowerCase().includes(search));
   });
   rows = rows.sort((a, b) => {
-    const comparison = input.sortField === "shortCode"
-      ? a.shortCode.localeCompare(b.shortCode)
-      : new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    const comparison = input.sortField === "clicks"
+      ? (a.id * 10) - (b.id * 10)
+      : input.sortField === "shortCode"
+        ? a.shortCode.localeCompare(b.shortCode)
+        : new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
     return input.sortDir === "asc" ? comparison : -comparison;
   });
   const total = rows.length;
   const pageCount = Math.max(1, Math.ceil(total / input.limit));
   const page = Math.min(input.page, pageCount);
   return {
-    items: rows.slice((page - 1) * input.limit, page * input.limit),
+    items: rows.slice((page - 1) * input.limit, page * input.limit).map(link => ({
+      ...link,
+      clickCount: link.id * 10,
+    })),
     total,
     page,
     pageCount,
@@ -96,10 +101,11 @@ describe("project links page service", () => {
     expect(second?.pagination).toMatchObject({ page: 2, total: 120, pageCount: 3, hasPreviousPage: true, hasNextPage: true });
     expect(first?.items).toHaveLength(50);
     expect(second?.items).toHaveLength(50);
-    expect(first?.items[0].id).toBe(1);
-    expect(second?.items[0].id).toBe(51);
+    expect(first?.items[0]).toMatchObject({ id: 1, clickCount: 10 });
+    expect(second?.items[0]).toMatchObject({ id: 51, clickCount: 510 });
     expect(mocks.queryProjectLinksSqlPage).toHaveBeenCalledTimes(2);
     expect(mocks.getLinksByProjectId).not.toHaveBeenCalled();
+    expect(mocks.getClickCountsByLinkIds).not.toHaveBeenCalled();
   });
 
   it("pushes search and tag filters into the SQL page query", async () => {
@@ -142,12 +148,15 @@ describe("project links page service", () => {
     expect(mocks.queryProjectLinksSqlPage).not.toHaveBeenCalled();
   });
 
-  it("uses compatibility scan for global click sorting and enforces project ownership", async () => {
+  it("sorts globally by clicks in SQL without a full project scan and enforces ownership", async () => {
     vi.resetModules();
     const { loadProjectLinksPage } = await import("./projectLinksPage");
     const result = await loadProjectLinksPage({ userId: 7, projectId: 10, page: 1, limit: 3, sortField: "clicks", sortDir: "desc" });
     expect(result?.items.map(item => item.id)).toEqual([120, 119, 118]);
-    expect(mocks.getLinksByProjectId).toHaveBeenCalledWith(10);
+    expect(result?.items.map(item => item.clickCount)).toEqual([1200, 1190, 1180]);
+    expect(mocks.queryProjectLinksSqlPage).toHaveBeenCalledWith(expect.objectContaining({ sortField: "clicks", sortDir: "desc" }));
+    expect(mocks.getLinksByProjectId).not.toHaveBeenCalled();
+    expect(mocks.getClickCountsByLinkIds).not.toHaveBeenCalled();
 
     const forbidden = await loadProjectLinksPage({ userId: 999, projectId: 10, page: 1, limit: 50, sortField: "createdAt", sortDir: "desc" });
     expect(forbidden).toBeNull();
