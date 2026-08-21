@@ -430,15 +430,19 @@ export async function getLatestBackupDownloadUrl(): Promise<string | null> {
 export async function backupHandler(req: Request, res: Response) {
   try {
     if (!isAuthorizedCronRequest(req)) return res.status(403).json({ error: "cron-only" });
+    const today = new Date().toISOString().slice(0, 10);
+    if ((await db.getSiteSetting(LAST_SCHEDULED_DATE_KEY)) === today) {
+      return res.json({ ok: true, skipped: "scheduled backup already created today", date: today });
+    }
     const manifest = await createBackupSnapshot("scheduled");
-    await db.setSiteSetting(LAST_SCHEDULED_DATE_KEY, manifest.createdAt.slice(0, 10));
+    await db.setSiteSetting(LAST_SCHEDULED_DATE_KEY, today);
     await db.writeAuditLog({
       actorId: 0,
       actorName: "system",
       action: "backup.export",
       targetType: "system",
       targetId: manifest.id,
-      metadata: { source: "scheduled", encrypted: true, checksumSha256: manifest.checksumSha256, key: manifest.key },
+      metadata: { source: "external_cron", encrypted: true, checksumSha256: manifest.checksumSha256, key: manifest.key },
     });
     return res.json({ ok: true, manifest });
   } catch (err: any) {
