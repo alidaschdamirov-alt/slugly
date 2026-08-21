@@ -2,7 +2,6 @@ import { and, asc, count, desc, eq, like, notInArray, or, sql } from "drizzle-or
 import { links } from "../drizzle/schema";
 import { getDb } from "./dbCore";
 import { listTrash } from "./softDelete";
-import type { ProjectLinksSortDir, ProjectLinksSortField } from "./projectLinksPage";
 
 export interface ProjectLinksSqlPageInput {
   projectId: number;
@@ -10,8 +9,8 @@ export interface ProjectLinksSqlPageInput {
   limit: number;
   search?: string;
   tag?: string;
-  sortField: Exclude<ProjectLinksSortField, "clicks">;
-  sortDir: ProjectLinksSortDir;
+  sortField: "createdAt" | "shortCode";
+  sortDir: "asc" | "desc";
 }
 
 async function getSoftDeletedLinkIds() {
