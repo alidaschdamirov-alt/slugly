@@ -49,7 +49,7 @@ vi.mock("./workspace", () => ({
 }));
 
 vi.mock("./backup", () => ({
-  exportBackupForDownload: vi.fn().mockResolvedValue({ version: 1, data: {} }),
+  exportBackupForDownload: vi.fn().mockResolvedValue({ version: 2, encrypted: true }),
 }));
 
 vi.mock("./email", () => ({
@@ -86,6 +86,8 @@ function adminContext(): TrpcContext {
   };
 }
 
+const reason = "Phase 2 regression smoke test";
+
 describe("admin.* smoke", () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -97,22 +99,22 @@ describe("admin.* smoke", () => {
     await expect(admin.updateReport({ id: 1, status: "reviewed" })).resolves.toEqual({ success: true });
 
     await expect(admin.searchLinks({})).resolves.toEqual([]);
-    await expect(admin.disableLink({ id: 1 })).resolves.toEqual({ success: true });
-    await expect(admin.deleteLink({ id: 1 })).resolves.toEqual({ success: true });
-    await expect(admin.cleanupExpiredAnonymous()).resolves.toEqual({ success: true, count: 0 });
+    await expect(admin.disableLink({ id: 1, reason } as any)).resolves.toEqual({ success: true });
+    await expect(admin.deleteLink({ id: 1, reason } as any)).resolves.toEqual({ success: true });
+    await expect(admin.cleanupExpiredAnonymous({ reason } as any)).resolves.toEqual({ success: true, count: 0 });
 
     await expect(admin.searchUsers({})).resolves.toEqual([]);
     await expect(admin.getUserCard({ id: 2 })).resolves.toBeTruthy();
-    await expect(admin.suspendUser({ id: 2 })).resolves.toEqual({ success: true });
+    await expect(admin.suspendUser({ id: 2, reason } as any)).resolves.toEqual({ success: true });
     await expect(admin.unsuspendUser({ id: 2 })).resolves.toEqual({ success: true });
-    await expect(admin.banUser({ id: 2 })).resolves.toEqual({ success: true });
+    await expect(admin.banUser({ id: 2, reason } as any)).resolves.toEqual({ success: true });
     await expect(admin.overridePlan({ workspaceId: 1, plan: "pro" })).resolves.toEqual({ success: true });
     await expect(admin.setRole({ id: 2, role: "support" })).resolves.toEqual({ success: true });
-    await expect(admin.deleteUser({ id: 2 })).resolves.toEqual({ success: true });
+    await expect(admin.deleteUser({ id: 2, reason } as any)).resolves.toEqual({ success: true });
 
     await expect(admin.getBlockedDomains()).resolves.toEqual([]);
-    await expect(admin.addBlockedDomain({ hostname: "bad.example", reason: "test" })).resolves.toEqual({ success: true });
-    await expect(admin.removeBlockedDomain({ id: 1 })).resolves.toEqual({ success: true });
+    await expect(admin.addBlockedDomain({ hostname: "bad.example", reason })).resolves.toEqual({ success: true });
+    await expect(admin.removeBlockedDomain({ id: 1, reason } as any)).resolves.toEqual({ success: true });
 
     await expect(admin.getSiteSettings()).resolves.toBeTruthy();
     await expect(admin.updateSiteSettings({ safeMode: true })).resolves.toEqual({ success: true });
