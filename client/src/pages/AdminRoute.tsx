@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import AbuseOperationsPanel from "./AbuseOperationsPanel";
 import AdminIpAllowlistPanel from "./AdminIpAllowlistPanel";
 import AdminPanelWithSecurity from "./AdminPanelWithSecurity";
+import AdminTrashPanel from "./AdminTrashPanel";
 import PrivilegedSessionsPanel from "./PrivilegedSessionsPanel";
 import SupportAdminPanel from "./SupportAdminPanel";
 import SupportSecurityDrawer from "./SupportSecurityDrawer";
@@ -24,6 +25,7 @@ export default function AdminRoute() {
       <>
         <AdminPanelWithSecurity />
         <AbuseOperationsPanel />
+        <AdminTrashPanel />
         <PrivilegedSessionsPanel />
         <AdminIpAllowlistPanel />
         <SystemHealthPanel />
