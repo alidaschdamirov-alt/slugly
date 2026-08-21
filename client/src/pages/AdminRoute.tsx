@@ -4,6 +4,7 @@ import AbuseOperationsPanel from "./AbuseOperationsPanel";
 import AdminIpAllowlistPanel from "./AdminIpAllowlistPanel";
 import AdminPanelWithSecurity from "./AdminPanelWithSecurity";
 import AdminTrashPanel from "./AdminTrashPanel";
+import BackupOperationsPanel from "./BackupOperationsPanel";
 import EmailDeliverabilityPanel from "./EmailDeliverabilityPanel";
 import PrivilegedSessionsPanel from "./PrivilegedSessionsPanel";
 import SupportAdminPanel from "./SupportAdminPanel";
@@ -28,6 +29,7 @@ export default function AdminRoute() {
         <AbuseOperationsPanel />
         <AdminTrashPanel />
         <EmailDeliverabilityPanel />
+        <BackupOperationsPanel />
         <PrivilegedSessionsPanel />
         <AdminIpAllowlistPanel />
         <SystemHealthPanel />
