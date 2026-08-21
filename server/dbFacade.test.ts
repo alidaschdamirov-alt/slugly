@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   coreWriteAudit: vi.fn(),
   coreGetClickStats: vi.fn(),
   coreGetClickCountFiltered: vi.fn(),
+  coreGetClickCountsByLinkIds: vi.fn(),
+  coreGetClicksOverTimeForLinks: vi.fn(),
   softDeleteLink: vi.fn(),
   softDeleteUser: vi.fn(),
   softDeleteExpiredAnonymous: vi.fn(),
@@ -20,6 +22,8 @@ vi.mock("./dbCore", () => ({
   writeAuditLog: mocks.coreWriteAudit,
   getClickStats: mocks.coreGetClickStats,
   getClickCountByLinkIdFiltered: mocks.coreGetClickCountFiltered,
+  getClickCountsByLinkIds: mocks.coreGetClickCountsByLinkIds,
+  getClicksOverTimeForLinks: mocks.coreGetClicksOverTimeForLinks,
 }));
 
 vi.mock("./softDelete", () => ({
@@ -40,6 +44,12 @@ describe("database safety facade", () => {
     mocks.coreWriteAudit.mockResolvedValue(undefined);
     mocks.coreGetClickStats.mockResolvedValue({ countries: [], devices: [], browsers: [], referrers: [] });
     mocks.coreGetClickCountFiltered.mockResolvedValue({ total: 12, unique: 7 });
+    mocks.coreGetClickCountsByLinkIds.mockResolvedValue({ 1: 3, 2: 4, 3: 5 });
+    mocks.coreGetClicksOverTimeForLinks.mockResolvedValue({
+      1: [{ day: "2026-08-20", count: 2 }],
+      2: [{ day: "2026-08-20", count: 3 }],
+      3: [{ day: "2026-08-21", count: 4 }],
+    });
   });
 
   it("routes legacy admin link deletion to soft delete only", async () => {
@@ -97,5 +107,33 @@ describe("database safety facade", () => {
     });
     expect(mocks.coreGetClickStats).toHaveBeenCalledWith(12);
     expect(mocks.coreGetClickCountFiltered).toHaveBeenCalledWith(12, true);
+  });
+
+  it("batches concurrent click-count requests into one core query", async () => {
+    vi.resetModules();
+    const db = await import("./db");
+    const [first, second] = await Promise.all([
+      db.getClickCountsByLinkIds([1, 2]),
+      db.getClickCountsByLinkIds([2, 3]),
+    ]);
+
+    expect(mocks.coreGetClickCountsByLinkIds).toHaveBeenCalledTimes(1);
+    expect(mocks.coreGetClickCountsByLinkIds).toHaveBeenCalledWith([1, 2, 3]);
+    expect(first).toEqual({ 1: 3, 2: 4 });
+    expect(second).toEqual({ 2: 4, 3: 5 });
+  });
+
+  it("batches concurrent project sparklines with the same window", async () => {
+    vi.resetModules();
+    const db = await import("./db");
+    const [first, second] = await Promise.all([
+      db.getProjectSparkline([1, 2], 7),
+      db.getProjectSparkline([3], 7),
+    ]);
+
+    expect(mocks.coreGetClicksOverTimeForLinks).toHaveBeenCalledTimes(1);
+    expect(mocks.coreGetClicksOverTimeForLinks).toHaveBeenCalledWith([1, 2, 3], 7);
+    expect(first).toEqual([{ day: "2026-08-20", count: 5 }]);
+    expect(second).toEqual([{ day: "2026-08-21", count: 4 }]);
   });
 });
