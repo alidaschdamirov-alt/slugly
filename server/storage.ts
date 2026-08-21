@@ -32,7 +32,7 @@ function publicUrl(key: string): string {
   return `/storage/${key.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-function isPrivateStorageKey(key: string): boolean {
+export function isPrivateStorageKey(key: string): boolean {
   return key.startsWith("backups/") || key.startsWith("reports/");
 }
 
