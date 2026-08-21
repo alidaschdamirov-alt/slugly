@@ -1,5 +1,7 @@
 // Stable database core. Dangerous admin delete helpers are intentionally
 // overridden in this facade so legacy admin UI cannot bypass 30-day recovery.
+import { desc, inArray } from "drizzle-orm";
+import { links } from "../drizzle/schema";
 import * as core from "./dbCore";
 export * from "./dbCore";
 
@@ -17,12 +19,142 @@ export async function getUnassignedLinks(...args: Parameters<typeof core.getUnas
   return filterTrashLinks(await core.getUnassignedLinks(...args));
 }
 
-export async function getLinksByProjectId(...args: Parameters<typeof core.getLinksByProjectId>) {
-  return filterTrashLinks(await core.getLinksByProjectId(...args));
+type ProjectLinks = Awaited<ReturnType<typeof core.getLinksByProjectId>>;
+type ProjectLinksWaiter = { resolve: (value: ProjectLinks) => void; reject: (reason?: unknown) => void };
+const projectLinksQueue = new Map<number, ProjectLinksWaiter[]>();
+let projectLinksScheduled = false;
+
+function scheduleProjectLinksFlush() {
+  if (projectLinksScheduled) return;
+  projectLinksScheduled = true;
+  queueMicrotask(async () => {
+    projectLinksScheduled = false;
+    const batch = new Map(projectLinksQueue);
+    projectLinksQueue.clear();
+    const projectIds = [...batch.keys()];
+    try {
+      const database = await core.getDb();
+      if (!database || projectIds.length === 0) {
+        for (const waiters of batch.values()) waiters.forEach(waiter => waiter.resolve([]));
+        return;
+      }
+      const rows = await database
+        .select()
+        .from(links)
+        .where(inArray(links.projectId, projectIds))
+        .orderBy(desc(links.createdAt));
+      const visibleRows = await filterTrashLinks(rows);
+      const grouped = new Map<number, ProjectLinks>();
+      for (const row of visibleRows) {
+        if (row.projectId == null) continue;
+        const list = grouped.get(row.projectId) || [];
+        list.push(row);
+        grouped.set(row.projectId, list);
+      }
+      for (const [projectId, waiters] of batch) {
+        const value = grouped.get(projectId) || [];
+        waiters.forEach(waiter => waiter.resolve(value));
+      }
+    } catch (error) {
+      for (const waiters of batch.values()) waiters.forEach(waiter => waiter.reject(error));
+    }
+  });
+}
+
+export function getLinksByProjectId(projectId: number): Promise<ProjectLinks> {
+  return new Promise((resolve, reject) => {
+    const waiters = projectLinksQueue.get(projectId) || [];
+    waiters.push({ resolve, reject });
+    projectLinksQueue.set(projectId, waiters);
+    scheduleProjectLinksFlush();
+  });
 }
 
 export async function getLinksByTag(...args: Parameters<typeof core.getLinksByTag>) {
   return filterTrashLinks(await core.getLinksByTag(...args));
+}
+
+type ClickCountMap = Awaited<ReturnType<typeof core.getClickCountsByLinkIds>>;
+type ClickCountRequest = { ids: number[]; resolve: (value: ClickCountMap) => void; reject: (reason?: unknown) => void };
+let clickCountQueue: ClickCountRequest[] = [];
+let clickCountScheduled = false;
+
+function scheduleClickCountFlush() {
+  if (clickCountScheduled) return;
+  clickCountScheduled = true;
+  queueMicrotask(async () => {
+    clickCountScheduled = false;
+    const batch = clickCountQueue;
+    clickCountQueue = [];
+    const union = [...new Set(batch.flatMap(request => request.ids))];
+    try {
+      const counts = union.length > 0 ? await core.getClickCountsByLinkIds(union) : {};
+      for (const request of batch) {
+        const subset: ClickCountMap = {};
+        for (const id of request.ids) if (counts[id] !== undefined) subset[id] = counts[id];
+        request.resolve(subset);
+      }
+    } catch (error) {
+      batch.forEach(request => request.reject(error));
+    }
+  });
+}
+
+export function getClickCountsByLinkIds(linkIds: number[]): Promise<ClickCountMap> {
+  return new Promise((resolve, reject) => {
+    clickCountQueue.push({ ids: [...linkIds], resolve, reject });
+    scheduleClickCountFlush();
+  });
+}
+
+type ProjectSparkline = Awaited<ReturnType<typeof core.getProjectSparkline>>;
+type SparklineRequest = { ids: number[]; days: number; resolve: (value: ProjectSparkline) => void; reject: (reason?: unknown) => void };
+let sparklineQueue: SparklineRequest[] = [];
+let sparklineScheduled = false;
+
+function scheduleSparklineFlush() {
+  if (sparklineScheduled) return;
+  sparklineScheduled = true;
+  queueMicrotask(async () => {
+    sparklineScheduled = false;
+    const batch = sparklineQueue;
+    sparklineQueue = [];
+    const groups = new Map<number, SparklineRequest[]>();
+    for (const request of batch) {
+      const group = groups.get(request.days) || [];
+      group.push(request);
+      groups.set(request.days, group);
+    }
+
+    await Promise.all([...groups.entries()].map(async ([days, requests]) => {
+      try {
+        const union = [...new Set(requests.flatMap(request => request.ids))];
+        const perLink = union.length > 0 ? await core.getClicksOverTimeForLinks(union, days) : {};
+        for (const request of requests) {
+          const totals = new Map<string, number>();
+          for (const id of request.ids) {
+            for (const point of perLink[id] || []) {
+              totals.set(point.day, (totals.get(point.day) || 0) + Number(point.count || 0));
+            }
+          }
+          request.resolve(
+            [...totals.entries()]
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([day, count]) => ({ day, count }))
+          );
+        }
+      } catch (error) {
+        requests.forEach(request => request.reject(error));
+      }
+    }));
+  });
+}
+
+export function getProjectSparkline(linkIds: number[], days = 7): Promise<ProjectSparkline> {
+  return new Promise((resolve, reject) => {
+    sparklineQueue.push({ ids: [...linkIds], days, resolve, reject });
+    scheduleSparklineFlush();
+  });
 }
 
 export async function getClickStats(linkId: number) {
