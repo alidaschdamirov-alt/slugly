@@ -12,7 +12,7 @@ export function startBackupSchedulerWithTelemetry() {
       const result = await runScheduledBackupIfDue();
       if (!result.ran) return;
       const { recordBackgroundJobResult } = await import("./systemHealth");
-      await recordBackgroundJobResult("encrypted_backup", {
+      await recordBackgroundJobResult("backup", {
         success: true,
         durationMs: Date.now() - startedAt,
         processed: 1,
@@ -21,7 +21,7 @@ export function startBackupSchedulerWithTelemetry() {
     } catch (error: any) {
       console.error("[BackupScheduler]", error);
       const { recordBackgroundJobResult } = await import("./systemHealth");
-      await recordBackgroundJobResult("encrypted_backup", {
+      await recordBackgroundJobResult("backup", {
         success: false,
         durationMs: Date.now() - startedAt,
         processed: 0,
