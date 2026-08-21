@@ -25,6 +25,14 @@ export async function getLinksByTag(...args: Parameters<typeof core.getLinksByTa
   return filterTrashLinks(await core.getLinksByTag(...args));
 }
 
+export async function getClickStats(linkId: number) {
+  const [stats, counts] = await Promise.all([
+    core.getClickStats(linkId),
+    core.getClickCountByLinkIdFiltered(linkId, true),
+  ]);
+  return { ...stats, uniqueClicks: counts.unique };
+}
+
 export async function adminDeleteLink(linkId: number) {
   const { softDeleteLink } = await import("./softDelete");
   await softDeleteLink(linkId);
