@@ -1,0 +1,319 @@
+name: Temporary Authenticated Production E2E
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  authenticated-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install Playwright
+        run: |
+          mkdir -p /tmp/slugly-auth-e2e/screens
+          cd /tmp/slugly-auth-e2e
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund playwright@1.55.0
+          npx playwright install chromium
+      - name: Run authenticated production E2E
+        env:
+          BASE_URL: https://slugly.io
+          EXPECTED_COMMIT: ed9e988700195db57cfbd908bba1d1af1de7d7b5
+        run: |
+          cat >/tmp/slugly-auth-e2e/e2e.mjs <<'NODE'
+          import { chromium, request } from 'playwright';
+          import crypto from 'node:crypto';
+          import fs from 'node:fs/promises';
+
+          const base = process.env.BASE_URL.replace(/\/$/, '');
+          const expected = process.env.EXPECTED_COMMIT;
+          const stamp = Date.now();
+          const projectName = `E2E Project ${stamp}`;
+          const linkTitle = `E2E Active ${stamp}`;
+          const updatedTitle = `E2E Updated ${stamp}`;
+          const shortCode = `e2e-${stamp}`;
+          const tag = `e2e-${String(stamp).slice(-6)}`;
+          const out = '/tmp/slugly-auth-e2e/screens';
+          const results = [];
+          const diagnostics = [];
+          let mailbox = null;
+
+          const assert = (value, message) => { if (!value) throw new Error(message); };
+          const pass = (check, detail = {}) => { results.push({ check, status: 'PASS', ...detail }); };
+          async function shot(page, name) { try { await page.screenshot({ path: `${out}/${name}.png`, fullPage: true }); } catch {} }
+
+          async function createMailbox() {
+            const d = await fetch('https://api.mail.tm/domains?page=1');
+            assert(d.ok, `mail.tm domains HTTP ${d.status}`);
+            const data = await d.json();
+            const domain = (data['hydra:member'] || []).find(x => x.isActive !== false)?.domain;
+            assert(domain, 'mail.tm returned no active domain');
+            const address = `sluglye2e${stamp}${crypto.randomBytes(3).toString('hex')}@${domain}`;
+            const password = `T!${crypto.randomBytes(18).toString('base64url')}a9`;
+            const a = await fetch('https://api.mail.tm/accounts', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ address, password }) });
+            assert(a.ok, `mail.tm account HTTP ${a.status}`);
+            const account = await a.json();
+            const t = await fetch('https://api.mail.tm/token', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ address, password }) });
+            assert(t.ok, `mail.tm token HTTP ${t.status}`);
+            const token = (await t.json()).token;
+            return { address, password, token, id: account.id };
+          }
+
+          async function waitForVerificationCode(box, timeoutMs = 90000) {
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline) {
+              const list = await fetch('https://api.mail.tm/messages?page=1', { headers: { authorization: `Bearer ${box.token}` } });
+              if (list.ok) {
+                const messages = (await list.json())['hydra:member'] || [];
+                for (const msg of messages) {
+                  const full = await fetch(`https://api.mail.tm/messages/${msg.id}`, { headers: { authorization: `Bearer ${box.token}` } });
+                  if (!full.ok) continue;
+                  const data = await full.json();
+                  const text = [data.subject, data.text, ...(Array.isArray(data.html) ? data.html : [data.html])].filter(Boolean).join('\n');
+                  const contextual = text.match(/(?:verification|verify|code)[^0-9]{0,120}([0-9]{6})/i);
+                  const generic = text.match(/\b([0-9]{6})\b/);
+                  const code = contextual?.[1] || generic?.[1];
+                  if (code) return code;
+                }
+              }
+              await new Promise(r => setTimeout(r, 2500));
+            }
+            throw new Error('No Clerk verification code arrived in temporary mailbox');
+          }
+
+          async function dismissCookie(page) {
+            const btn = page.getByRole('button', { name: /Essential Only/i });
+            if (await btn.isVisible().catch(() => false)) await btn.click();
+          }
+
+          const api = await request.newContext({ extraHTTPHeaders: { 'cache-control': 'no-cache' } });
+          const healthRes = await api.get(`${base}/healthz?e2e=${stamp}`);
+          assert(healthRes.ok(), `healthz HTTP ${healthRes.status()}`);
+          const health = await healthRes.json();
+          assert(health.status === 'ok', `health status ${health.status}`);
+          assert(health.commit === expected, `health commit ${health.commit} != ${expected}`);
+          assert(String(health.runtime).startsWith('v24.'), `health runtime ${health.runtime}`);
+          pass('healthz', { commit: health.commit, runtime: health.runtime });
+          await api.dispose();
+
+          mailbox = await createMailbox();
+          pass('temporary-mailbox-created');
+
+          const browser = await chromium.launch({ headless: true });
+          const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+          const page = await context.newPage();
+          const sameOrigin5xx = [];
+          const pageErrors = [];
+          page.on('pageerror', e => pageErrors.push(String(e)));
+          page.on('response', r => {
+            try { const u = new URL(r.url()); if (u.origin === new URL(base).origin && r.status() >= 500) sameOrigin5xx.push(`${r.status()} ${u.pathname}`); } catch {}
+          });
+
+          try {
+            await page.goto(`${base}/auth?mode=signup`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await dismissCookie(page);
+            await page.locator('input[name="emailAddress"]').waitFor({ state: 'visible', timeout: 20000 });
+            await page.locator('input[name="emailAddress"]').fill(mailbox.address);
+            await page.locator('input[name="password"]').fill(`Slugly-E2E-${stamp}!Aa9`);
+            await page.getByRole('button', { name: 'Continue', exact: true }).click();
+            await shot(page, '01-signup-submitted');
+
+            const code = await waitForVerificationCode(mailbox);
+            const otp = page.getByRole('textbox', { name: /Enter verification code/i });
+            if (await otp.isVisible().catch(() => false)) {
+              await otp.pressSequentially(code);
+            } else {
+              const codeInput = page.locator('input[inputmode="numeric"], input[name="code"]').first();
+              await codeInput.waitFor({ state: 'visible', timeout: 15000 });
+              await codeInput.fill(code);
+            }
+            await page.waitForURL(/\/dashboard/, { timeout: 30000 });
+            await page.getByText(/Welcome back/i).waitFor({ state: 'visible', timeout: 20000 });
+            pass('signup-and-login');
+            await shot(page, '02-dashboard-new-user');
+
+            const createFirst = page.getByRole('button', { name: /Create Your First Project|New Project/i }).first();
+            await createFirst.click();
+            await page.locator('input[placeholder="Q4 Campaign"]').fill(projectName);
+            const desc = page.locator('textarea[placeholder="Links for the Q4 marketing push"]');
+            if (await desc.isVisible().catch(() => false)) await desc.fill('Automated live production E2E project');
+            await page.getByRole('button', { name: 'Create Project', exact: true }).click();
+            await page.getByText(projectName, { exact: true }).waitFor({ state: 'visible', timeout: 20000 });
+            pass('dashboard-create-project');
+            await shot(page, '03-project-created');
+
+            await page.getByText(projectName, { exact: true }).click();
+            await page.waitForURL(/\/project\/\d+$/, { timeout: 20000 });
+            const projectUrl = page.url();
+            const projectId = Number(projectUrl.match(/\/project\/(\d+)$/)?.[1]);
+            assert(projectId > 0, `could not derive project id from ${projectUrl}`);
+            await page.getByText('50 per page', { exact: false }).waitFor({ state: 'visible', timeout: 20000 });
+            pass('project-view-page-1', { projectId });
+
+            await page.getByRole('button', { name: /Add Link/i }).click();
+            await page.waitForURL(/\/create\?project=/, { timeout: 20000 });
+            await page.locator('input[placeholder="https://example.com/landing-page"]').fill(`https://example.com/?slugly_e2e=${stamp}`);
+            await page.locator('input[placeholder="Black Friday Landing"]').fill(linkTitle);
+            const tagInput = page.locator('input[placeholder="Add tags (press Enter)"]');
+            await tagInput.fill(tag);
+            await tagInput.press('Enter');
+            await page.locator('input[placeholder="my-link"]').fill(shortCode);
+            await page.getByRole('button', { name: 'Create Link', exact: true }).click();
+            await page.getByText('Link Created!', { exact: true }).waitFor({ state: 'visible', timeout: 25000 });
+            pass('create-active-link', { shortCode });
+            await shot(page, '04-link-created');
+
+            const redirectPage = await context.newPage();
+            const redirectResponse = await redirectPage.goto(`${base}/r/${shortCode}?e2e=${stamp}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            const finalUrl = redirectPage.url();
+            assert(new URL(finalUrl).hostname === 'example.com', `redirect ended at ${finalUrl}`);
+            assert(!redirectResponse || redirectResponse.status() < 500, `redirect final HTTP ${redirectResponse?.status()}`);
+            pass('redirect', { finalHost: 'example.com' });
+            await redirectPage.close();
+
+            await page.getByRole('button', { name: /View Links/i }).click();
+            await page.waitForURL(new RegExp(`/project/${projectId}$`), { timeout: 20000 });
+            await page.getByText(shortCode, { exact: false }).waitFor({ state: 'visible', timeout: 20000 });
+            await page.reload({ waitUntil: 'domcontentloaded' });
+            await page.getByText(shortCode, { exact: false }).waitFor({ state: 'visible', timeout: 20000 });
+            pass('project-view-link-visible');
+
+            const search = page.locator('input[placeholder="Search links..."]');
+            await search.fill(linkTitle);
+            await page.waitForTimeout(800);
+            await page.getByText(shortCode, { exact: false }).waitFor({ state: 'visible', timeout: 15000 });
+            pass('project-search');
+            await search.fill('');
+            await page.waitForTimeout(700);
+
+            async function chooseCombo(index, optionName) {
+              const combo = page.locator('button[role="combobox"]').nth(index);
+              await combo.click();
+              await page.getByRole('option', { name: optionName, exact: true }).click();
+              await page.waitForTimeout(700);
+            }
+
+            await chooseCombo(0, 'Active');
+            await page.getByText(shortCode, { exact: false }).waitFor({ state: 'visible', timeout: 15000 });
+            pass('status-filter-active');
+            for (const statusName of ['Broken', 'Quarantine', 'Expired']) {
+              await chooseCombo(0, statusName);
+              await page.waitForTimeout(600);
+              const hasError = await page.getByText(/Failed to load project links/i).isVisible().catch(() => false);
+              assert(!hasError, `${statusName} filter returned page error`);
+              pass(`status-filter-${statusName.toLowerCase()}`);
+            }
+            await chooseCombo(0, 'All Status');
+
+            const combosAfterStatus = page.locator('button[role="combobox"]');
+            if ((await combosAfterStatus.count()) >= 3) {
+              await chooseCombo(1, tag);
+              await page.getByText(shortCode, { exact: false }).waitFor({ state: 'visible', timeout: 15000 });
+              pass('tag-filter');
+              await chooseCombo(1, 'All Tags');
+              await chooseCombo(2, 'Most Clicks');
+              await page.getByText(shortCode, { exact: false }).waitFor({ state: 'visible', timeout: 15000 });
+              pass('clicks-sorting');
+            } else {
+              throw new Error(`expected status/tag/sort comboboxes, got ${await combosAfterStatus.count()}`);
+            }
+
+            const card = page.locator('div.group.cursor-pointer').filter({ hasText: shortCode }).first();
+            await card.waitFor({ state: 'visible', timeout: 15000 });
+            await card.hover();
+            const cardButtons = card.locator('button');
+            assert((await cardButtons.count()) >= 4, `link card actions missing; buttons=${await cardButtons.count()}`);
+            await cardButtons.nth(0).click();
+            await page.getByRole('dialog').waitFor({ state: 'visible', timeout: 10000 });
+            const dialogBody = await page.getByRole('dialog').innerText();
+            assert(/QR/i.test(dialogBody) || (await page.getByRole('dialog').locator('svg,canvas,img').count()) > 0, 'QR dialog has no QR content');
+            pass('qr-dialog');
+            await page.keyboard.press('Escape');
+
+            await card.hover();
+            await cardButtons.nth(1).click();
+            await page.getByText('Edit Link', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+            const titleInput = page.locator('input[placeholder="Optional title"]');
+            await titleInput.fill(updatedTitle);
+            await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+            await page.getByText(updatedTitle, { exact: true }).waitFor({ state: 'visible', timeout: 20000 });
+            pass('edit-link');
+            await shot(page, '05-project-view-after-edit');
+
+            await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+            await page.waitForURL(new RegExp(`/project/${projectId}/analytics$`), { timeout: 20000 });
+            const analyticsBody = await page.locator('body').innerText();
+            assert(/Analytics/i.test(analyticsBody), 'project analytics page missing analytics content');
+            pass('project-analytics');
+            await shot(page, '06-project-analytics');
+
+            await page.goto(`${base}/qr`, { waitUntil: 'domcontentloaded' });
+            await page.locator('body').waitFor({ state: 'visible' });
+            const qrBody = await page.locator('body').innerText();
+            assert(/QR/i.test(qrBody), 'QR page failed to render');
+            pass('qr-page');
+
+            await page.goto(`${base}/reports`, { waitUntil: 'domcontentloaded' });
+            const reportsBody = await page.locator('body').innerText();
+            assert(/Export Report|Reports require Team/i.test(reportsBody), 'reports page failed to render');
+            if (/Reports require Team/i.test(reportsBody)) pass('reports-team-gate');
+            else pass('reports-page-access');
+            await shot(page, '07-reports');
+
+            await page.goto(`${base}/project/${projectId}`, { waitUntil: 'domcontentloaded' });
+            await page.getByText(updatedTitle, { exact: true }).waitFor({ state: 'visible', timeout: 20000 });
+            const editedCard = page.locator('div.group.cursor-pointer').filter({ hasText: shortCode }).first();
+            await editedCard.hover();
+            const deleteButton = editedCard.locator('button').nth(2);
+            await deleteButton.click();
+            const deleteDialog = page.getByRole('alertdialog');
+            await deleteDialog.waitFor({ state: 'visible', timeout: 10000 });
+            const destructive = deleteDialog.getByRole('button').filter({ hasText: /Delete/i }).last();
+            await destructive.click();
+            await page.getByText(shortCode, { exact: false }).waitFor({ state: 'hidden', timeout: 20000 });
+            pass('soft-delete-link-to-trash');
+
+            await page.goto(`${base}/dashboard`, { waitUntil: 'domcontentloaded' });
+            await page.getByText(projectName, { exact: true }).waitFor({ state: 'visible', timeout: 20000 });
+            pass('dashboard-after-user-actions');
+            await shot(page, '08-dashboard-final');
+
+            // Best-effort cleanup of the temporary Clerk user. This removes the test identity;
+            // no user credentials or production secrets are used.
+            const cleanup = await page.evaluate(async () => {
+              try {
+                const clerk = globalThis.Clerk;
+                if (clerk?.user?.delete) { await clerk.user.delete(); return 'deleted'; }
+                return 'clerk-user-delete-unavailable';
+              } catch (e) { return `delete-error:${String(e)}`; }
+            });
+            diagnostics.push({ clerkCleanup: cleanup });
+          } finally {
+            await browser.close();
+            if (mailbox?.token && mailbox?.id) {
+              try { await fetch(`https://api.mail.tm/accounts/${mailbox.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${mailbox.token}` } }); } catch {}
+            }
+          }
+
+          if (sameOrigin5xx.length) throw new Error(`same-origin 5xx encountered: ${[...new Set(sameOrigin5xx)].join(', ')}`);
+          console.log('AUTH_E2E_RESULTS=' + JSON.stringify(results, null, 2));
+          console.log('AUTH_E2E_DIAGNOSTICS=' + JSON.stringify(diagnostics, null, 2));
+          if (pageErrors.length) console.log('AUTH_E2E_PAGE_ERRORS=' + JSON.stringify(pageErrors.slice(0,20), null, 2));
+          NODE
+          cd /tmp/slugly-auth-e2e
+          node e2e.mjs
+      - name: Upload authenticated E2E screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slugly-authenticated-production-e2e
+          path: /tmp/slugly-auth-e2e/screens
+          if-no-files-found: warn
