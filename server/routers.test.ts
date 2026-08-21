@@ -39,6 +39,7 @@ vi.mock("./db", () => ({
   createDomain: vi.fn().mockResolvedValue({ id: 1 }),
   updateDomainVerified: vi.fn().mockResolvedValue(undefined),
   deleteDomain: vi.fn().mockResolvedValue(undefined),
+  getSiteSetting: vi.fn().mockResolvedValue(null),
   writeAuditLog: vi.fn().mockResolvedValue(undefined),
 }));
 
