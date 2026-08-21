@@ -18,9 +18,7 @@ export interface ProjectLinksPageInput {
   sortDir: ProjectLinksSortDir;
 }
 
-function compareNullableText(a: string | null | undefined, b: string | null | undefined) {
-  return String(a || "").localeCompare(String(b || ""));
-}
+const STATUS_SCAN_CHUNK_SIZE = 100;
 
 async function addEffectiveStatus<T extends {
   id: number;
@@ -52,23 +50,25 @@ export async function loadProjectLinksPage(input: ProjectLinksPageInput) {
   const project = await db.getProjectById(input.projectId);
   if (!project || project.userId !== input.userId) return null;
 
-  const page = Math.max(1, Math.floor(input.page));
+  const requestedPage = Math.max(1, Math.floor(input.page));
   const limit = Math.min(100, Math.max(1, Math.floor(input.limit)));
   const search = (input.search || "").trim();
   const tag = (input.tag || "").trim();
+  const sqlInput = {
+    projectId: input.projectId,
+    search,
+    tag,
+    sortField: input.sortField,
+    sortDir: input.sortDir,
+  } as const;
 
-  // All views without an effective-security-status filter stay inside SQL:
-  // search, tag filters, created/short-code sorting, and global click sorting
-  // page before data reaches Node, so unlimited projects remain bounded to one page.
+  // Normal project views page entirely in SQL: only the requested rows are sent
+  // to Node even for unlimited projects, including global click sorting.
   if (!input.status) {
     const sqlPage = await queryProjectLinksSqlPage({
-      projectId: input.projectId,
-      page,
+      ...sqlInput,
+      page: requestedPage,
       limit,
-      search,
-      tag,
-      sortField: input.sortField,
-      sortDir: input.sortDir,
     });
     const pageItems = await Promise.all(sqlPage.items.map(addEffectiveStatus));
 
@@ -87,60 +87,58 @@ export async function loadProjectLinksPage(input: ProjectLinksPageInput) {
     };
   }
 
-  // Effective security statuses (especially broken/quarantine) are partly
-  // derived from URL validation or state stored outside the links table.
-  // Keep the compatibility path only for explicit status filters.
-  const projectLinks = await db.getLinksByProjectId(input.projectId);
-  const allTags = Array.from(new Set(
-    projectLinks.flatMap(link => Array.isArray(link.tags) ? link.tags : [])
-  )).sort((a, b) => a.localeCompare(b));
-  const normalizedSearch = search.toLowerCase();
-
-  let candidates = projectLinks.filter(link => {
-    if (tag && !(Array.isArray(link.tags) && link.tags.includes(tag))) return false;
-    if (!normalizedSearch) return true;
-    return [link.shortCode, link.destinationUrl, link.title, link.utmSource, link.utmCampaign]
-      .some(value => String(value || "").toLowerCase().includes(normalizedSearch));
+  // Effective status can depend on URL validation and security quarantine state,
+  // so it cannot be expressed purely in the links table. Scan SQL pages in
+  // bounded chunks, preserve the requested global sort order, and retain only
+  // the requested filtered page plus a one-page tail for out-of-range recovery.
+  const firstRawPage = await queryProjectLinksSqlPage({
+    ...sqlInput,
+    page: 1,
+    limit: STATUS_SCAN_CHUNK_SIZE,
   });
+  const targetStart = (requestedPage - 1) * limit;
+  const targetEnd = targetStart + limit;
+  const targetItems: Array<Awaited<ReturnType<typeof addEffectiveStatus>>> = [];
+  const tailItems: Array<Awaited<ReturnType<typeof addEffectiveStatus>>> = [];
+  let matchedTotal = 0;
 
-  const withStatus = await Promise.all(candidates.map(addEffectiveStatus));
-  candidates = withStatus.filter(link => link.effectiveStatus === input.status);
+  const processRawItems = async (items: typeof firstRawPage.items) => {
+    const enriched = await Promise.all(items.map(addEffectiveStatus));
+    for (const link of enriched) {
+      if (link.effectiveStatus !== input.status) continue;
+      const matchIndex = matchedTotal;
+      matchedTotal += 1;
+      if (matchIndex >= targetStart && matchIndex < targetEnd) targetItems.push(link);
+      tailItems.push(link);
+      if (tailItems.length > limit) tailItems.shift();
+    }
+  };
 
-  let clickCounts: Record<number, number> = {};
-  if (input.sortField === "clicks") {
-    clickCounts = candidates.length > 0
-      ? await db.getClickCountsByLinkIds(candidates.map(link => link.id))
-      : {};
+  await processRawItems(firstRawPage.items);
+  for (let rawPage = 2; rawPage <= firstRawPage.pageCount; rawPage += 1) {
+    const nextRawPage = await queryProjectLinksSqlPage({
+      ...sqlInput,
+      page: rawPage,
+      limit: STATUS_SCAN_CHUNK_SIZE,
+    });
+    await processRawItems(nextRawPage.items);
   }
 
-  candidates.sort((a, b) => {
-    let comparison = 0;
-    if (input.sortField === "shortCode") comparison = compareNullableText(a.shortCode, b.shortCode);
-    else if (input.sortField === "clicks") comparison = (clickCounts[a.id] || 0) - (clickCounts[b.id] || 0);
-    else comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-    if (comparison === 0) comparison = a.id - b.id;
-    return input.sortDir === "asc" ? comparison : -comparison;
-  });
-
-  const total = candidates.length;
-  const pageCount = Math.max(1, Math.ceil(total / limit));
-  const safePage = Math.min(page, pageCount);
-  const offset = (safePage - 1) * limit;
-  const pageItems = candidates.slice(offset, offset + limit);
-
-  if (input.sortField !== "clicks") {
-    clickCounts = pageItems.length > 0
-      ? await db.getClickCountsByLinkIds(pageItems.map(link => link.id))
-      : {};
+  const filteredPageCount = Math.max(1, Math.ceil(matchedTotal / limit));
+  const safePage = Math.min(requestedPage, filteredPageCount);
+  let pageItems = targetItems;
+  if (safePage !== requestedPage) {
+    const lastPageSize = matchedTotal === 0 ? 0 : (matchedTotal % limit || limit);
+    pageItems = lastPageSize > 0 ? tailItems.slice(-lastPageSize) : [];
   }
 
   return {
     projectId: input.projectId,
-    items: pageItems.map(link => ({ ...link, clickCount: clickCounts[link.id] || 0 })),
-    pagination: paginationMeta(safePage, limit, total, pageCount),
+    items: pageItems.map(link => ({ ...link, clickCount: Number(link.clickCount || 0) })),
+    pagination: paginationMeta(safePage, limit, matchedTotal, filteredPageCount),
     filters: {
-      allTags,
-      search: normalizedSearch,
+      allTags: firstRawPage.allTags,
+      search: search.toLowerCase(),
       tag: tag || null,
       status: input.status,
       sortField: input.sortField,
