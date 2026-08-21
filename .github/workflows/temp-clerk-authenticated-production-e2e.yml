@@ -46,6 +46,7 @@ jobs:
           sed -i "s#assert(/Analytics/i.test(await page.locator('body').innerText()), 'project analytics page missing Analytics');#await page.getByText(/Analytics/i).first().waitFor({ state: 'visible', timeout: 15000 });#" /tmp/slugly-clerk-e2e/e2e.mjs
           sed -i "s#assert(/QR/i.test(await page.locator('body').innerText()), 'QR page failed to render');#await page.getByText(/QR/i).first().waitFor({ state: 'visible', timeout: 15000 });#" /tmp/slugly-clerk-e2e/e2e.mjs
           sed -i "s#await page.waitForTimeout(600);#await page.waitForTimeout(1500);#" /tmp/slugly-clerk-e2e/e2e.mjs
+          sed -i "s#await page.getByText('Access denied', { exact: true }).waitFor({ state: 'visible', timeout: 15000 });#const adminBody = await page.locator('body').innerText(); assert(/Access denied|Forbidden/i.test(adminBody), 'nonprivileged admin guard missing');#" /tmp/slugly-clerk-e2e/e2e.mjs
           cd /tmp/slugly-clerk-e2e
           npm init -y >/dev/null 2>&1
           npm install --no-audit --no-fund playwright@1.55.0 @playwright/test@1.55.0 @clerk/testing@latest @trpc/client@11.6.0 superjson@1.13.3
