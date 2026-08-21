@@ -1,0 +1,78 @@
+name: Temporary Live Auth Guards
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  auth-guards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install Playwright
+        run: |
+          mkdir -p /tmp/slugly-guards
+          cd /tmp/slugly-guards
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund playwright@1.55.0
+          npx playwright install chromium
+      - name: Verify protected production routes
+        env:
+          BASE_URL: https://slugly.io
+        run: |
+          cat >/tmp/slugly-guards/guards.mjs <<'NODE'
+          import { chromium } from 'playwright';
+          const base = process.env.BASE_URL.replace(/\/$/, '');
+          const routes = [
+            '/dashboard',
+            '/project/999999999',
+            '/project/999999999/analytics',
+            '/link/999999999/analytics',
+            '/link/999999999/rules',
+            '/create',
+            '/links/new',
+            '/create/bulk',
+            '/domains',
+            '/billing',
+            '/tags',
+            '/tags/compare',
+            '/tags/e2e-smoke',
+            '/qr',
+            '/reports',
+            '/team',
+            '/utm-templates',
+            '/campaigns',
+            '/compare',
+            '/branding',
+            '/export-report',
+            '/admin',
+            '/privacy-settings'
+          ];
+          const browser = await chromium.launch({ headless:true });
+          const context = await browser.newContext({ viewport:{width:1280,height:900} });
+          const page = await context.newPage();
+          const results=[];
+          const sameOrigin5xx=[];
+          page.on('response', r => { try { const u=new URL(r.url()); if (u.origin===new URL(base).origin && r.status()>=500) sameOrigin5xx.push(`${r.status()} ${u.pathname}`); } catch {} });
+          for (const route of routes) {
+            const response = await page.goto(`${base}${route}?guard=${Date.now()}`, { waitUntil:'domcontentloaded', timeout:30000 });
+            if (!response || response.status() >= 500) throw new Error(`${route} HTTP ${response?.status()}`);
+            await page.waitForTimeout(900);
+            const body = await page.locator('body').innerText();
+            const protectedState = page.url().includes('/auth') || (await page.locator('input[name="emailAddress"], input[type="email"]').count())>0 || /Sign in to Slugly|sign in|log in/i.test(body);
+            if (!protectedState) throw new Error(`${route} did not present auth guard; final=${page.url()}`);
+            results.push({route,status:'PASS',final:page.url()});
+          }
+          if (sameOrigin5xx.length) throw new Error(`same-origin 5xx: ${[...new Set(sameOrigin5xx)].join(', ')}`);
+          console.log('AUTH_GUARD_RESULTS='+JSON.stringify(results,null,2));
+          await browser.close();
+          NODE
+          cd /tmp/slugly-guards
+          node guards.mjs
