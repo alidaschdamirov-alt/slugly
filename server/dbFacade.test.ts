@@ -1,71 +1,73 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const coreDeleteLink = vi.fn();
-const coreDeleteUser = vi.fn();
-const coreCleanup = vi.fn();
-const coreWriteAudit = vi.fn();
-const softDeleteLink = vi.fn();
-const softDeleteUser = vi.fn();
-const softDeleteExpiredAnonymous = vi.fn();
-const consumeCleanupPreviewGate = vi.fn();
+const mocks = vi.hoisted(() => ({
+  coreDeleteLink: vi.fn(),
+  coreDeleteUser: vi.fn(),
+  coreCleanup: vi.fn(),
+  coreWriteAudit: vi.fn(),
+  softDeleteLink: vi.fn(),
+  softDeleteUser: vi.fn(),
+  softDeleteExpiredAnonymous: vi.fn(),
+  consumeCleanupPreviewGate: vi.fn(),
+}));
 
 vi.mock("./dbCore", () => ({
-  adminDeleteLink: coreDeleteLink,
-  adminDeleteUser: coreDeleteUser,
-  adminCleanupExpiredAnonymous: coreCleanup,
-  writeAuditLog: coreWriteAudit,
+  adminDeleteLink: mocks.coreDeleteLink,
+  adminDeleteUser: mocks.coreDeleteUser,
+  adminCleanupExpiredAnonymous: mocks.coreCleanup,
+  writeAuditLog: mocks.coreWriteAudit,
 }));
 
 vi.mock("./softDelete", () => ({
-  softDeleteLink,
-  softDeleteUser,
-  softDeleteExpiredAnonymous,
+  softDeleteLink: mocks.softDeleteLink,
+  softDeleteUser: mocks.softDeleteUser,
+  softDeleteExpiredAnonymous: mocks.softDeleteExpiredAnonymous,
 }));
 
-vi.mock("./cleanupPreviewGate", () => ({ consumeCleanupPreviewGate }));
+vi.mock("./cleanupPreviewGate", () => ({ consumeCleanupPreviewGate: mocks.consumeCleanupPreviewGate }));
 
 describe("database safety facade", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    softDeleteLink.mockResolvedValue(undefined);
-    softDeleteUser.mockResolvedValue(undefined);
-    softDeleteExpiredAnonymous.mockResolvedValue(3);
-    consumeCleanupPreviewGate.mockResolvedValue({ count: 3 });
-    coreWriteAudit.mockResolvedValue(undefined);
+    mocks.softDeleteLink.mockResolvedValue(undefined);
+    mocks.softDeleteUser.mockResolvedValue(undefined);
+    mocks.softDeleteExpiredAnonymous.mockResolvedValue(3);
+    mocks.consumeCleanupPreviewGate.mockResolvedValue({ count: 3 });
+    mocks.coreWriteAudit.mockResolvedValue(undefined);
   });
 
   it("routes legacy admin link deletion to soft delete only", async () => {
     vi.resetModules();
     const db = await import("./db");
     await db.adminDeleteLink(12);
-    expect(softDeleteLink).toHaveBeenCalledWith(12);
-    expect(coreDeleteLink).not.toHaveBeenCalled();
+    expect(mocks.softDeleteLink).toHaveBeenCalledWith(12);
+    expect(mocks.coreDeleteLink).not.toHaveBeenCalled();
   });
 
   it("routes legacy admin user deletion to soft delete only", async () => {
     vi.resetModules();
     const db = await import("./db");
     await db.adminDeleteUser(44);
-    expect(softDeleteUser).toHaveBeenCalledWith(44);
-    expect(coreDeleteUser).not.toHaveBeenCalled();
+    expect(mocks.softDeleteUser).toHaveBeenCalledWith(44);
+    expect(mocks.coreDeleteUser).not.toHaveBeenCalled();
   });
 
   it("requires cleanup preview before moving expired links to Trash", async () => {
     vi.resetModules();
     const db = await import("./db");
     await expect(db.adminCleanupExpiredAnonymous()).resolves.toBe(3);
-    expect(consumeCleanupPreviewGate).toHaveBeenCalledOnce();
-    expect(softDeleteExpiredAnonymous).toHaveBeenCalledOnce();
-    expect(coreCleanup).not.toHaveBeenCalled();
+    expect(mocks.consumeCleanupPreviewGate).toHaveBeenCalledOnce();
+    expect(mocks.softDeleteExpiredAnonymous).toHaveBeenCalledOnce();
+    expect(mocks.coreCleanup).not.toHaveBeenCalled();
   });
 
   it("does not execute cleanup if preview validation fails", async () => {
-    consumeCleanupPreviewGate.mockRejectedValueOnce(new Error("Preview required"));
+    mocks.consumeCleanupPreviewGate.mockRejectedValueOnce(new Error("Preview required"));
     vi.resetModules();
     const db = await import("./db");
     await expect(db.adminCleanupExpiredAnonymous()).rejects.toThrow("Preview required");
-    expect(softDeleteExpiredAnonymous).not.toHaveBeenCalled();
-    expect(coreCleanup).not.toHaveBeenCalled();
+    expect(mocks.softDeleteExpiredAnonymous).not.toHaveBeenCalled();
+    expect(mocks.coreCleanup).not.toHaveBeenCalled();
   });
 
   it("suppresses misleading legacy hard-delete audit rows", async () => {
@@ -74,6 +76,6 @@ describe("database safety facade", () => {
     await db.writeAuditLog({ actorId: 1, actorName: "Admin", action: "user.delete", targetType: "user", targetId: "44", metadata: {} });
     await db.writeAuditLog({ actorId: 1, actorName: "Admin", action: "link.delete", targetType: "link", targetId: "12", metadata: {} });
     await db.writeAuditLog({ actorId: 1, actorName: "Admin", action: "links.cleanup_expired", targetType: "system", targetId: null, metadata: {} });
-    expect(coreWriteAudit).not.toHaveBeenCalled();
+    expect(mocks.coreWriteAudit).not.toHaveBeenCalled();
   });
 });
