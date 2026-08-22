@@ -27,6 +27,7 @@ const AuthPage = lazy(() => import("./pages/AuthPage"));
 const AdminRoute = lazy(() => import("./pages/AdminRoute"));
 const AppealsPage = lazy(() => import("./pages/AppealsPage"));
 const PrivacySettings = lazy(() => import("./pages/PrivacySettings"));
+const SecuritySettings = lazy(() => import("./pages/SecuritySettings"));
 const Team = lazy(() => import("./pages/Team"));
 const InviteAccept = lazy(() => import("./pages/InviteAccept"));
 const UtmTemplates = lazy(() => import("./pages/UtmTemplates"));
@@ -80,6 +81,7 @@ function AppRoutes() {
         <Route path="/appeals" component={AppealsPage} />
         <Route path="/invite/:token" component={InviteAccept} />
         <Route path="/admin" component={AdminRoute} />
+        <Route path="/security" component={SecuritySettings} />
         <Route path="/privacy-settings" component={PrivacySettings} />
         <Route path="/terms" component={TermsPage} />
         <Route path="/privacy" component={PrivacyPage} />
@@ -111,6 +113,7 @@ function getRouteEvent(location: string) {
   if (location.startsWith("/reports") || location.startsWith("/export-report")) return "reports_opened";
   if (location.startsWith("/appeals")) return "appeals_opened";
   if (location.startsWith("/invite")) return "invite_accept_opened";
+  if (location.startsWith("/security")) return "security_opened";
   if (location.startsWith("/admin")) return "admin_opened";
   return null;
 }

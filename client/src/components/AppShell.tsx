@@ -21,6 +21,7 @@ import {
   Tag,
   QrCode,
   Shield,
+  ShieldCheck,
   Lock,
   Users,
   FileText,
@@ -86,6 +87,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     })}
                   </nav>
                   <div className="border-t p-3 space-y-1">
+                    <button onClick={() => navigateTo("/security")} className="flex items-center gap-3 w-full px-3 py-2 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent/50"><ShieldCheck className="h-4 w-4" />Security & 2FA</button>
                     <button onClick={() => navigateTo("/privacy-settings")} className="flex items-center gap-3 w-full px-3 py-2 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent/50"><Lock className="h-4 w-4" />Privacy & Data</button>
                     {(user?.role === "admin" || user?.role === "support") && (
                       <button onClick={() => navigateTo("/admin")} className="flex items-center gap-3 w-full px-3 py-2 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent/50"><Shield className="h-4 w-4" />{user.role === "support" ? "Support Console" : "Admin Panel"}</button>
@@ -122,6 +124,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <DropdownMenuContent align="end" className="w-48">
                 <div className="px-2 py-1.5"><p className="text-sm font-medium">{user?.name}</p><p className="text-xs text-muted-foreground">{user?.email}</p></div>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setLocation("/security")}><ShieldCheck className="mr-2 h-4 w-4" />Security & 2FA</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setLocation("/privacy-settings")}><Lock className="mr-2 h-4 w-4" />Privacy & Data</DropdownMenuItem>
                 {(user?.role === "admin" || user?.role === "support") && <DropdownMenuItem onClick={() => setLocation("/admin")}><Shield className="mr-2 h-4 w-4" />{user.role === "support" ? "Support Console" : "Admin Panel"}</DropdownMenuItem>}
                 <DropdownMenuItem onClick={toggleTheme}>{theme === "dark" ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}{theme === "dark" ? "Light mode" : "Dark mode"}</DropdownMenuItem>
