@@ -26,6 +26,11 @@ import { isPrivilegedIpAllowed } from "../privilegedIp";
 import { backupHandler } from "../backup";
 import { isAuthorizedCronRequest } from "./cronAuth";
 import { getDestinationUrlError, normalizeDestinationUrl } from "../../shared/validation/destination-url";
+import {
+  checkCustomDomainProviderOnStartup,
+  customDomainRoutingMiddleware,
+  customDomainsApiRouter,
+} from "../customDomainsApi";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -92,6 +97,18 @@ function validateDestinationUrlsBeforeTrpc(req: Request, res: Response, next: Ne
   return next();
 }
 
+function blockLegacyDomainMutations(req: Request, res: Response, next: NextFunction) {
+  const procedures = getProcedureNames(req);
+  const blocked = procedures.some(name => ["domain.create", "domain.verify", "domain.delete"].includes(name));
+  if (!blocked) return next();
+  return res.status(410).json({
+    error: {
+      message: "Custom domain mutations moved to the managed custom-domain API.",
+      code: "GONE",
+    },
+  });
+}
+
 async function startServer() {
   const app = express();
   app.set("trust proxy", 1);
@@ -107,9 +124,11 @@ async function startServer() {
   registerStorageRoutes(app);
 
   app.use("/api/impersonation", impersonationRouter);
+  app.use("/api/custom-domains", customDomainsApiRouter);
 
   app.use(
     "/api/trpc",
+    blockLegacyDomainMutations,
     validateDestinationUrlsBeforeTrpc,
     createExpressMiddleware({ router: appRouter, createContext })
   );
@@ -244,6 +263,7 @@ async function startServer() {
     }
   });
 
+  app.use(customDomainRoutingMiddleware);
   app.use("/r", quarantineGuardRouter);
   app.use("/r", redirectRouter);
 
@@ -270,6 +290,7 @@ async function startServer() {
   const port = await findAvailablePort(preferredPort);
   if (port !== preferredPort) console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   server.listen(port, () => console.log(`Server running on http://localhost:${port}/`));
+  void checkCustomDomainProviderOnStartup();
 }
 
 startServer().catch(console.error);
