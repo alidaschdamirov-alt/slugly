@@ -9,8 +9,8 @@ import { Separator } from "@/components/ui/separator";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
 import { trackEvent } from "@/lib/analytics";
-import { ArrowLeft, Link2, Loader2, ChevronDown, ChevronUp, Copy, Check, Calendar, BarChart3, AlertTriangle, ArrowUpCircle } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, Link2, Loader2, ChevronDown, ChevronUp, Copy, Check, Calendar, BarChart3, AlertTriangle, ArrowUpCircle, Globe } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { toast } from "sonner";
 import TagInput from "@/components/TagInput";
@@ -19,6 +19,12 @@ import { getNextPlan } from "../../../shared/plans";
 import { DESTINATION_URL_ERROR, normalizeDestinationUrl } from "@shared/validation/destination-url";
 
 const CUSTOM_CODE_RE = /^[a-zA-Z0-9_-]+$/;
+
+type CustomDomain = {
+  id: number;
+  hostname: string;
+  verified: boolean;
+};
 
 function getFriendlyError(message: string) {
   try {
@@ -40,6 +46,15 @@ function getFriendlyError(message: string) {
   if (message.includes("Enter a valid URL")) return DESTINATION_URL_ERROR;
 
   return message || "Something went wrong. Please try again.";
+}
+
+async function getApiError(response: Response) {
+  try {
+    const body = await response.json();
+    return body?.error || body?.message || `Request failed with HTTP ${response.status}`;
+  } catch {
+    return `Request failed with HTTP ${response.status}`;
+  }
 }
 
 export default function CreateLink() {
@@ -68,31 +83,76 @@ export default function CreateLink() {
   const [showScheduling, setShowScheduling] = useState(false);
   const [createdCode, setCreatedCode] = useState<string | null>(null);
   const [createdLinkId, setCreatedLinkId] = useState<number | null>(null);
+  const [createdShortUrl, setCreatedShortUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [upsellError, setUpsellError] = useState<any>(null);
   const [upsellOpen, setUpsellOpen] = useState(false);
+  const [customDomains, setCustomDomains] = useState<CustomDomain[]>([]);
+  const [selectedDomainId, setSelectedDomainId] = useState("slugly");
 
   const { data: projects } = trpc.project.list.useQuery(undefined, { enabled: !!user });
   const { data: workspaceState, isLoading: workspaceLoading } = trpc.workspace.current.useQuery(undefined, { enabled: !!user });
   const utils = trpc.useUtils();
 
   const plan = workspaceState?.workspace?.plan || "free";
+  const workspaceId = workspaceState?.workspace?.id;
   const linkLimit = workspaceState?.planConfig?.limits?.links ?? -1;
   const linkUsage = workspaceState?.usage?.links ?? 0;
   const linkLimitReached = linkLimit !== -1 && linkUsage >= linkLimit;
   const linksRemaining = linkLimit === -1 ? null : Math.max(linkLimit - linkUsage, 0);
   const nearLinkLimit = linkLimit !== -1 && !linkLimitReached && linksRemaining !== null && linksRemaining <= 1;
+  const selectedDomain = customDomains.find(domain => String(domain.id) === selectedDomainId);
+
+  useEffect(() => {
+    if (!user || !workspaceId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/custom-domains", {
+          headers: { "x-workspace-id": String(workspaceId) },
+          credentials: "same-origin",
+        });
+        if (!response.ok) return;
+        const body = await response.json();
+        if (!cancelled) setCustomDomains((body?.domains || []).filter((domain: CustomDomain) => domain.verified));
+      } catch {
+        // Custom domains are optional. The default Slugly domain remains available.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user, workspaceId]);
 
   const createLink = trpc.link.create.useMutation({
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
+      let shortUrl = `${window.location.origin}/r/${data.shortCode}`;
+      if (selectedDomainId !== "slugly" && workspaceId) {
+        try {
+          const response = await fetch(`/api/custom-domains/links/${data.id}`, {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              "x-workspace-id": String(workspaceId),
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({ domainId: Number(selectedDomainId) }),
+          });
+          if (!response.ok) throw new Error(await getApiError(response));
+          const body = await response.json();
+          shortUrl = body.shortUrl || shortUrl;
+        } catch (error: any) {
+          toast.error(`Link was created, but the custom domain could not be attached: ${error?.message || "unknown error"}`);
+        }
+      }
+
       setCreatedCode(data.shortCode);
       setCreatedLinkId(data.id);
+      setCreatedShortUrl(shortUrl);
       utils.link.list.invalidate();
       utils.tag.list.invalidate();
       utils.workspace.current.invalidate();
       utils.billing.status.invalidate();
-      toast.success("Link created!");
-      trackEvent("link_created", { shortCode: data.shortCode });
+      toast.success(selectedDomainId !== "slugly" ? "Branded short link created!" : "Link created!");
+      trackEvent("link_created", { shortCode: data.shortCode, custom_domain: selectedDomainId !== "slugly" });
     },
     onError: (err) => {
       const limitErr = parseLimitError(err.message);
@@ -168,6 +228,7 @@ export default function CreateLink() {
       has_project: !!projectId,
       has_utm: !!(utmSource || utmMedium || utmCampaign || utmTerm || utmContent),
       has_schedule: !!(activeFrom || expiresAt),
+      has_custom_domain: selectedDomainId !== "slugly",
     });
 
     createLink.mutate({
@@ -187,9 +248,10 @@ export default function CreateLink() {
   };
 
   const copyCreatedLink = () => {
-    if (createdCode) {
-      navigator.clipboard.writeText(`${window.location.origin}/r/${createdCode}`);
-      trackEvent("link_copy_clicked", { source: "create_success", shortCode: createdCode });
+    const shortUrl = createdShortUrl || (createdCode ? `${window.location.origin}/r/${createdCode}` : null);
+    if (shortUrl) {
+      navigator.clipboard.writeText(shortUrl);
+      trackEvent("link_copy_clicked", { source: "create_success", shortCode: createdCode || "" });
       setCopied(true);
       toast.success("Copied!");
       setTimeout(() => setCopied(false), 2000);
@@ -214,7 +276,11 @@ export default function CreateLink() {
     setUtmContent("");
     setCreatedCode(null);
     setCreatedLinkId(null);
+    setCreatedShortUrl(null);
+    setSelectedDomainId("slugly");
   };
+
+  const shortCodePrefix = selectedDomain ? `${selectedDomain.hostname}/` : `${window.location.host}/r/`;
 
   return (
     <AppShell>
@@ -240,7 +306,7 @@ export default function CreateLink() {
               <h2 className="text-lg font-semibold mb-2">Link Created!</h2>
               <p className="text-sm text-muted-foreground mb-4">Your short link is ready to share</p>
               <div className="flex items-center justify-center gap-2 mb-6">
-                <code className="text-sm bg-muted px-3 py-1.5 rounded-md font-mono">{window.location.origin}/r/{createdCode}</code>
+                <code className="text-sm bg-muted px-3 py-1.5 rounded-md font-mono break-all">{createdShortUrl || `${window.location.origin}/r/${createdCode}`}</code>
                 <button onClick={copyCreatedLink} className="p-2 hover:bg-muted rounded-md transition-colors">
                   {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
                 </button>
@@ -311,6 +377,27 @@ export default function CreateLink() {
               </div>
 
               <div className="space-y-2">
+                <Label>Short Domain</Label>
+                <Select value={selectedDomainId} onValueChange={setSelectedDomainId} disabled={linkLimitReached}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose short domain" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="slugly">slugly.io (default)</SelectItem>
+                    {customDomains.map(domain => (
+                      <SelectItem key={domain.id} value={String(domain.id)}>{domain.hostname}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">Verified custom domains create branded links without the /r/ prefix.</p>
+                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setLocation("/domains")}>
+                    <Globe className="h-3.5 w-3.5 mr-1" /> Manage domains
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
                 <Label>Tags</Label>
                 <TagInput value={tags} onChange={setTags} placeholder="Add tags (press Enter)" />
               </div>
@@ -318,7 +405,7 @@ export default function CreateLink() {
               <div className="space-y-2">
                 <Label>Custom Short Code (optional)</Label>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground whitespace-nowrap">{window.location.host}/r/</span>
+                  <span className="text-sm text-muted-foreground whitespace-nowrap">{shortCodePrefix}</span>
                   <Input
                     value={customCode}
                     onChange={e => { setCustomCode(e.target.value); setCustomCodeError(""); }}
@@ -381,7 +468,7 @@ export default function CreateLink() {
 
               <Button type="submit" className="w-full" disabled={createLink.isPending || workspaceLoading || !url.trim() || linkLimitReached}>
                 {createLink.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : linkLimitReached ? <ArrowUpCircle className="h-4 w-4 mr-2" /> : <Link2 className="h-4 w-4 mr-2" />}
-                {linkLimitReached ? "Upgrade to Create More Links" : "Create Short Link"}
+                {linkLimitReached ? "Upgrade to Create More Links" : selectedDomainId !== "slugly" ? "Create Branded Short Link" : "Create Short Link"}
               </Button>
             </form>
           </Card>
