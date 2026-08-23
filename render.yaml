@@ -70,6 +70,14 @@ services:
         generateValue: true
       - key: CRON_SECRET
         generateValue: true
+      - key: CUSTOM_DOMAINS_ENABLED
+        value: "true"
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_CUSTOM_DOMAIN_SERVICE_ID
+        value: srv-d9ccko7avr4c73atg140
+      - key: CUSTOM_DOMAIN_CNAME_TARGET
+        value: slugly.onrender.com
     disk:
       name: slugly-files
       mountPath: /var/data
