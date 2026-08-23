@@ -202,7 +202,11 @@ async function getAuthenticatedContext(req: Request, res: Response) {
     error.status = 401;
     throw error;
   }
-  return ctx;
+  return ctx as typeof ctx & {
+    user: NonNullable<typeof ctx.user>;
+    workspace: NonNullable<typeof ctx.workspace>;
+    membership: NonNullable<typeof ctx.membership>;
+  };
 }
 
 function assertCanEdit(role: string) {
@@ -457,13 +461,13 @@ export async function customDomainRoutingMiddleware(req: Request, res: Response,
     if (!hostname || DEFAULT_APP_HOSTS.has(hostname)) return next();
 
     const database = await getDb();
-    if (!database) return next();
+    if (!database) return res.status(503).send("Service temporarily unavailable");
     const [domain] = await database
       .select()
       .from(domains)
       .where(and(eq(domains.hostname, hostname), eq(domains.verified, true)))
       .limit(1);
-    if (!domain) return next();
+    if (!domain) return res.status(404).send("Custom domain is not active");
 
     const rawPath = req.path || "/";
     if (rawPath === "/") {
