@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 35
     env:
       BASE_URL: https://slugly.io
-      EXPECTED_COMMIT: d2342ce1d2e4661d324422ae91e919d02e715ced
+      EXPECTED_COMMIT: 623432d5de15e8565f08324e0bc31a61cdffeea1
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
       CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY }}
       E2E_EMAIL: slugly-e2e-${{ github.run_id }}@example.com
