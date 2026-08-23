@@ -54,17 +54,20 @@ export function validateCustomHostname(value: string): string | null {
   return null;
 }
 
+function getCnameTarget() {
+  return process.env.CUSTOM_DOMAIN_CNAME_TARGET?.trim() || DEFAULT_CNAME_TARGET;
+}
+
 function getRenderConfig() {
   const enabled = process.env.CUSTOM_DOMAINS_ENABLED === "true";
   const apiKey = process.env.RENDER_API_KEY?.trim();
   const serviceId = process.env.RENDER_CUSTOM_DOMAIN_SERVICE_ID?.trim();
-  const cnameTarget = process.env.CUSTOM_DOMAIN_CNAME_TARGET?.trim() || DEFAULT_CNAME_TARGET;
 
   if (!enabled) throw new Error("Custom domain provisioning is disabled.");
   if (!apiKey) throw new Error("Custom domain provider is not configured.");
   if (!serviceId) throw new Error("Custom domain service is not configured.");
 
-  return { apiKey, serviceId, cnameTarget };
+  return { apiKey, serviceId, cnameTarget: getCnameTarget() };
 }
 
 function renderErrorMessage(payload: any, fallback: string) {
@@ -232,7 +235,7 @@ async function migrateLegacyDomains(userId: number, workspaceId: number) {
   if (!database) return;
   await database
     .update(domains)
-    .set({ workspaceId })
+    .set({ workspaceId, verified: false })
     .where(and(eq(domains.userId, userId), isNull(domains.workspaceId)));
 }
 
@@ -252,12 +255,11 @@ customDomainsApiRouter.get("/", async (req, res) => {
       getWorkspaceDomains(ctx.workspace.id),
       getPlanConfig(ctx.workspace.plan as any),
     ]);
-    const { cnameTarget } = getRenderConfig();
     return res.json({
       domains: items,
       usage: items.length,
       limit: planConfig.limits.domains,
-      cnameTarget,
+      cnameTarget: getCnameTarget(),
     });
   } catch (error) {
     return sendApiError(res, error);
@@ -303,14 +305,13 @@ customDomainsApiRouter.post("/", async (req, res) => {
       verified: false,
     });
     const id = result[0].insertId;
-    const { cnameTarget } = getRenderConfig();
 
     return res.status(201).json({
       id,
       hostname,
       verificationToken,
       verified: false,
-      cnameTarget,
+      cnameTarget: getCnameTarget(),
       txtHost: `_slugly.${hostname}`,
       shortUrlFormat: `https://${hostname}/{short-code}`,
     });
