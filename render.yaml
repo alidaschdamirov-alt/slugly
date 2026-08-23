@@ -3,8 +3,8 @@ services:
     name: slugly-mysql
     runtime: image
     image:
-      url: docker.io/library/mysql:8.4
-    plan: starter
+      url: docker.io/library/mysql:8.4.11
+    plan: standard
     region: frankfurt
     envVars:
       - key: MYSQL_DATABASE
