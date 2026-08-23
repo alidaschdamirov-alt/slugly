@@ -95,8 +95,10 @@ export default function DomainsPage() {
   const { data: workspaceState, isLoading: workspaceLoading } = trpc.workspace.current.useQuery(undefined, { enabled: !!user });
   const workspaceId = workspaceState?.workspace?.id;
 
-  const workspaceHeaders = useCallback(() => {
-    return workspaceId ? { "x-workspace-id": String(workspaceId) } : {};
+  const workspaceHeaders = useCallback((): Record<string, string> => {
+    const headers: Record<string, string> = {};
+    if (workspaceId) headers["x-workspace-id"] = String(workspaceId);
+    return headers;
   }, [workspaceId]);
 
   const refreshDomains = useCallback(async () => {
