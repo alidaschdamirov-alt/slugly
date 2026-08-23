@@ -265,7 +265,6 @@ customDomainsApiRouter.get("/", async (req, res) => {
 });
 
 customDomainsApiRouter.post("/", async (req, res) => {
-  let provisionedHostname: string | null = null;
   try {
     const ctx = await getAuthenticatedContext(req, res);
     assertCanEdit(ctx.membership.role);
@@ -292,9 +291,8 @@ customDomainsApiRouter.post("/", async (req, res) => {
     const [existing] = await database.select().from(domains).where(eq(domains.hostname, hostname)).limit(1);
     if (existing) return res.status(409).json({ error: "This domain is already connected to Slugly." });
 
-    await ensureRenderDomain(hostname);
-    provisionedHostname = hostname;
-
+    // Do not consume a Render custom-domain slot before ownership is proven.
+    // The Render domain is provisioned only after the user publishes Slugly's TXT token.
     const { randomUUID } = await import("node:crypto");
     const verificationToken = `slugly-verify-${randomUUID().replace(/-/g, "").slice(0, 24)}`;
     const result = await database.insert(domains).values({
@@ -317,9 +315,6 @@ customDomainsApiRouter.post("/", async (req, res) => {
       shortUrlFormat: `https://${hostname}/{short-code}`,
     });
   } catch (error) {
-    if (provisionedHostname) {
-      await deleteRenderDomain(provisionedHostname).catch(() => undefined);
-    }
     return sendApiError(res, error);
   }
 });
@@ -349,6 +344,8 @@ customDomainsApiRouter.post("/:id/verify", async (req, res) => {
       });
     }
 
+    // Ownership is proven before provisioning the hostname on Render. This prevents
+    // third parties from consuming provider slots for domains they do not control.
     await ensureRenderDomain(domain.hostname);
     await triggerRenderVerification(domain.hostname);
 
