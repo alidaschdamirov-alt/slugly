@@ -231,6 +231,8 @@ export const pages = mysqlTable("pages", {
   backgroundColor: varchar("backgroundColor", { length: 7 }).default("#F7F7FC").notNull(),
   textColor: varchar("textColor", { length: 7 }).default("#14152B").notNull(),
   buttonStyle: mysqlEnum("buttonStyle", ["rounded", "pill", "square"]).default("rounded").notNull(),
+  renderMode: mysqlEnum("renderMode", ["builder", "custom_html"]).default("builder").notNull(),
+  customHtml: text("customHtml"),
   domainId: int("domainId"),
   status: mysqlEnum("status", ["draft", "published"]).default("draft").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
