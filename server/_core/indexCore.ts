@@ -23,6 +23,7 @@ import { impersonationRouter } from "../impersonationApi";
 import { resolveImpersonation } from "../impersonation";
 import { deepLinksApiRouter } from "../deepLinksApi";
 import { productQrPublicRouter } from "../productQrPublic";
+import { pagesPublicRouter } from "../pagesPublic";
 import { isPrivilegedRole } from "../adminAccess";
 import { isPrivilegedIpAllowed } from "../privilegedIp";
 import { backupHandler } from "../backup";
@@ -129,6 +130,7 @@ async function startServer() {
   app.use("/api/deeplinks", deepLinksApiRouter);
   app.use("/api/custom-domains", customDomainsApiRouter);
   app.use(productQrPublicRouter);
+  app.use(pagesPublicRouter);
 
   app.use(
     "/api/trpc",
