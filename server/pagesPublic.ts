@@ -70,8 +70,71 @@ export async function getPublicPageModel(page: Page, brandedHost = false) {
   return { page, buttons: enriched.filter(Boolean) as NonNullable<(typeof enriched)[number]>[] };
 }
 
+export function expandCustomHtml(
+  html: string,
+  model: Awaited<ReturnType<typeof getPublicPageModel>>
+) {
+  let output = String(html || "");
+  output = output
+    .replaceAll("{{SLUGLY_PAGE_TITLE}}", escapeHtml(model.page.title))
+    .replaceAll("{{SLUGLY_PAGE_HEADLINE}}", escapeHtml(model.page.headline || model.page.title))
+    .replaceAll("{{SLUGLY_PAGE_DESCRIPTION}}", escapeHtml(model.page.description || ""));
+
+  for (const button of model.buttons) {
+    const token = `{{SLUGLY_CTA_${button.id}}}`;
+    output = output.replaceAll(token, escapeHtml(button.href));
+  }
+  return output;
+}
+
+export function prepareSandboxedCustomHtml(
+  html: string,
+  model: Awaited<ReturnType<typeof getPublicPageModel>>
+) {
+  const expanded = expandCustomHtml(html, model);
+  const base = '<base target="_top">';
+  if (/<head\b[^>]*>/i.test(expanded)) {
+    return expanded.replace(/<head\b([^>]*)>/i, match => `${match}${base}`);
+  }
+  return `${base}${expanded}`;
+}
+
+function renderCustomHtmlPage(model: Awaited<ReturnType<typeof getPublicPageModel>>) {
+  const { page } = model;
+  const title = page.headline || page.title;
+  const customDocument = prepareSandboxedCustomHtml(page.customHtml || "", model);
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="index,follow">
+  <title>${escapeHtml(title)} · Slugly</title>
+  <style>
+    *{box-sizing:border-box}html,body{width:100%;height:100%;margin:0;background:#fff}
+    .custom-frame{position:fixed;inset:0;width:100%;height:100%;border:0;background:#fff}
+    .powered{position:fixed;right:12px;bottom:12px;z-index:10;padding:6px 9px;border-radius:999px;background:rgba(20,21,43,.82);color:#fff;font:600 10px/1 system-ui,sans-serif;text-decoration:none;backdrop-filter:blur(8px)}
+  </style>
+</head>
+<body>
+  <iframe
+    class="custom-frame"
+    title="${escapeHtml(page.title)}"
+    sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation allow-downloads allow-modals"
+    referrerpolicy="no-referrer"
+    srcdoc="${escapeHtml(customDocument)}"
+  ></iframe>
+  <a class="powered" href="https://slugly.io/" target="_blank" rel="noopener noreferrer">Powered by Slugly</a>
+</body>
+</html>`;
+}
+
 export function renderPublicPageHtml(model: Awaited<ReturnType<typeof getPublicPageModel>>) {
   const { page, buttons } = model;
+  if (page.renderMode === "custom_html" && page.customHtml?.trim()) {
+    return renderCustomHtmlPage(model);
+  }
   const radius = page.buttonStyle === "pill" ? "999px" : page.buttonStyle === "square" ? "8px" : "16px";
   const title = page.headline || page.title;
   const description = page.description || "";
