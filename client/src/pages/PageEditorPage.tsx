@@ -385,9 +385,9 @@ export default function PageEditorPage() {
                     <p className="text-xs font-medium">Slugly variables</p>
                     <p className="mt-1 text-[11px] text-muted-foreground">Use these directly in your HTML. CTA tokens keep routing and analytics connected even if the Page domain changes.</p>
                     <div className="mt-2 grid gap-2">
-                      <code className="rounded bg-muted px-2 py-1.5 text-[11px]">{{"{{SLUGLY_PAGE_TITLE}}"}}</code>
-                      <code className="rounded bg-muted px-2 py-1.5 text-[11px]">{{"{{SLUGLY_PAGE_HEADLINE}}"}}</code>
-                      <code className="rounded bg-muted px-2 py-1.5 text-[11px]">{{"{{SLUGLY_PAGE_DESCRIPTION}}"}}</code>
+                      <code className="rounded bg-muted px-2 py-1.5 text-[11px]">{"{{SLUGLY_PAGE_TITLE}}"}</code>
+                      <code className="rounded bg-muted px-2 py-1.5 text-[11px]">{"{{SLUGLY_PAGE_HEADLINE}}"}</code>
+                      <code className="rounded bg-muted px-2 py-1.5 text-[11px]">{"{{SLUGLY_PAGE_DESCRIPTION}}"}</code>
                       {(page.buttons || []).map((button: any) => (
                         <div key={button.id} className="flex min-w-0 items-center gap-2 rounded bg-muted px-2 py-1.5">
                           <code className="min-w-0 flex-1 truncate text-[11px]">{`{{SLUGLY_CTA_${button.id}}}`}</code>
