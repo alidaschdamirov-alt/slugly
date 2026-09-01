@@ -9,8 +9,8 @@ import { Separator } from "@/components/ui/separator";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
 import { trackEvent } from "@/lib/analytics";
-import { ArrowLeft, Link2, Loader2, ChevronDown, ChevronUp, Copy, Check, Calendar, BarChart3, AlertTriangle, ArrowUpCircle, Globe } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowLeft, Link2, Loader2, ChevronDown, ChevronUp, Copy, Check, Calendar, BarChart3, AlertTriangle, ArrowUpCircle, Globe, Route } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { toast } from "sonner";
 import TagInput from "@/components/TagInput";
@@ -24,6 +24,12 @@ type CustomDomain = {
   id: number;
   hostname: string;
   verified: boolean;
+};
+
+type RoutingRuleDraft = {
+  type: "geo" | "device" | "ab";
+  config: Record<string, any>;
+  priority: number;
 };
 
 function getFriendlyError(message: string) {
@@ -89,6 +95,18 @@ export default function CreateLink() {
   const [upsellOpen, setUpsellOpen] = useState(false);
   const [customDomains, setCustomDomains] = useState<CustomDomain[]>([]);
   const [selectedDomainId, setSelectedDomainId] = useState("slugly");
+  const [showRouting, setShowRouting] = useState(false);
+  const [routingType, setRoutingType] = useState<"geo" | "device" | "ab">("geo");
+  const [geoCountries, setGeoCountries] = useState("");
+  const [geoDestination, setGeoDestination] = useState("");
+  const [deviceTypes, setDeviceTypes] = useState<string[]>([]);
+  const [deviceDestination, setDeviceDestination] = useState("");
+  const [abDestinationA, setAbDestinationA] = useState("");
+  const [abDestinationB, setAbDestinationB] = useState("");
+  const [abWeightA, setAbWeightA] = useState(50);
+  const [abWeightB, setAbWeightB] = useState(50);
+  const [routingError, setRoutingError] = useState("");
+  const pendingRoutingRuleRef = useRef<RoutingRuleDraft | null>(null);
 
   const { data: projects } = trpc.project.list.useQuery(undefined, { enabled: !!user });
   const { data: workspaceState, isLoading: workspaceLoading } = trpc.workspace.current.useQuery(undefined, { enabled: !!user });
@@ -102,6 +120,10 @@ export default function CreateLink() {
   const linksRemaining = linkLimit === -1 ? null : Math.max(linkLimit - linkUsage, 0);
   const nearLinkLimit = linkLimit !== -1 && !linkLimitReached && linksRemaining !== null && linksRemaining <= 1;
   const selectedDomain = customDomains.find(domain => String(domain.id) === selectedDomainId);
+  const routingFeatures = workspaceState?.planConfig?.features;
+  const canUseGeoRouting = !!routingFeatures?.geoTarget;
+  const canUseAbRouting = !!routingFeatures?.abTest;
+  const canUseRouting = canUseGeoRouting || canUseAbRouting;
 
   useEffect(() => {
     if (!user || !workspaceId) return;
@@ -121,6 +143,8 @@ export default function CreateLink() {
     })();
     return () => { cancelled = true; };
   }, [user, workspaceId]);
+
+  const createRoutingRule = trpc.linkRules.create.useMutation();
 
   const createLink = trpc.link.create.useMutation({
     onSuccess: async (data) => {
@@ -144,6 +168,24 @@ export default function CreateLink() {
         }
       }
 
+      let routingCreated = false;
+      const pendingRoutingRule = pendingRoutingRuleRef.current;
+      if (pendingRoutingRule) {
+        try {
+          await createRoutingRule.mutateAsync({
+            linkId: data.id,
+            type: pendingRoutingRule.type,
+            config: pendingRoutingRule.config,
+            priority: pendingRoutingRule.priority,
+          });
+          routingCreated = true;
+        } catch (error: any) {
+          toast.error(`Link was created, but the routing rule could not be added: ${error?.message || "unknown error"}`);
+        } finally {
+          pendingRoutingRuleRef.current = null;
+        }
+      }
+
       setCreatedCode(data.shortCode);
       setCreatedLinkId(data.id);
       setCreatedShortUrl(shortUrl);
@@ -151,8 +193,18 @@ export default function CreateLink() {
       utils.tag.list.invalidate();
       utils.workspace.current.invalidate();
       utils.billing.status.invalidate();
-      toast.success(selectedDomainId !== "slugly" ? "Branded short link created!" : "Link created!");
-      trackEvent("link_created", { shortCode: data.shortCode, custom_domain: selectedDomainId !== "slugly" });
+      toast.success(
+        routingCreated
+          ? "Link and routing rule created!"
+          : selectedDomainId !== "slugly"
+            ? "Branded short link created!"
+            : "Link created!"
+      );
+      trackEvent("link_created", {
+        shortCode: data.shortCode,
+        custom_domain: selectedDomainId !== "slugly",
+        routing_rule: routingCreated ? pendingRoutingRule?.type : undefined,
+      });
     },
     onError: (err) => {
       const limitErr = parseLimitError(err.message);
@@ -189,6 +241,8 @@ export default function CreateLink() {
     setUrlError("");
     setCustomCodeError("");
     setScheduleError("");
+    setRoutingError("");
+    pendingRoutingRuleRef.current = null;
 
     if (linkLimitReached) {
       openLinkLimitUpsell();
@@ -221,6 +275,74 @@ export default function CreateLink() {
       return;
     }
 
+    if (showRouting) {
+      if (!canUseRouting) {
+        setRoutingError("Smart Routing requires Pro plan or higher.");
+        return;
+      }
+
+      if (routingType === "geo") {
+        const countries = geoCountries
+          .split(",")
+          .map(country => country.trim().toUpperCase())
+          .filter(Boolean);
+        if (countries.length === 0 || countries.some(country => !/^[A-Z]{2}$/.test(country))) {
+          setRoutingError("Enter one or more 2-letter ISO country codes, for example AZ, AE, US.");
+          return;
+        }
+        const destination = normalizeDestinationUrl(geoDestination);
+        if (!destination) {
+          setRoutingError("Enter a valid destination URL for the country routing rule.");
+          return;
+        }
+        if (destination !== geoDestination) setGeoDestination(destination);
+        pendingRoutingRuleRef.current = {
+          type: "geo",
+          config: { rules: [{ countries, destination }] },
+          priority: 1,
+        };
+      } else if (routingType === "device") {
+        if (deviceTypes.length === 0) {
+          setRoutingError("Choose at least one device type.");
+          return;
+        }
+        const destination = normalizeDestinationUrl(deviceDestination);
+        if (!destination) {
+          setRoutingError("Enter a valid destination URL for the device routing rule.");
+          return;
+        }
+        if (destination !== deviceDestination) setDeviceDestination(destination);
+        pendingRoutingRuleRef.current = {
+          type: "device",
+          config: { rules: [{ devices: deviceTypes, destination }] },
+          priority: 1,
+        };
+      } else {
+        const destinationA = normalizeDestinationUrl(abDestinationA);
+        const destinationB = normalizeDestinationUrl(abDestinationB);
+        if (!destinationA || !destinationB) {
+          setRoutingError("Enter valid destination URLs for both A/B variants.");
+          return;
+        }
+        if (abWeightA <= 0 || abWeightB <= 0) {
+          setRoutingError("A/B variant weights must be greater than zero.");
+          return;
+        }
+        if (destinationA !== abDestinationA) setAbDestinationA(destinationA);
+        if (destinationB !== abDestinationB) setAbDestinationB(destinationB);
+        pendingRoutingRuleRef.current = {
+          type: "ab",
+          config: {
+            variants: [
+              { name: "A", destination: destinationA, weight: abWeightA },
+              { name: "B", destination: destinationB, weight: abWeightB },
+            ],
+          },
+          priority: 1,
+        };
+      }
+    }
+
     if (normalizedUrl !== url) setUrl(normalizedUrl);
 
     trackEvent("link_create_clicked", {
@@ -229,6 +351,8 @@ export default function CreateLink() {
       has_utm: !!(utmSource || utmMedium || utmCampaign || utmTerm || utmContent),
       has_schedule: !!(activeFrom || expiresAt),
       has_custom_domain: selectedDomainId !== "slugly",
+      has_routing: !!pendingRoutingRuleRef.current,
+      routing_type: pendingRoutingRuleRef.current?.type,
     });
 
     createLink.mutate({
@@ -278,6 +402,18 @@ export default function CreateLink() {
     setCreatedLinkId(null);
     setCreatedShortUrl(null);
     setSelectedDomainId("slugly");
+    setShowRouting(false);
+    setRoutingType("geo");
+    setGeoCountries("");
+    setGeoDestination("");
+    setDeviceTypes([]);
+    setDeviceDestination("");
+    setAbDestinationA("");
+    setAbDestinationB("");
+    setAbWeightA(50);
+    setAbWeightB(50);
+    setRoutingError("");
+    pendingRoutingRuleRef.current = null;
   };
 
   const shortCodePrefix = selectedDomain ? `${selectedDomain.hostname}/` : `${window.location.host}/r/`;
@@ -325,10 +461,16 @@ export default function CreateLink() {
             <div className="flex gap-3 justify-center flex-wrap">
               <Button variant="outline" onClick={resetForm}>Create Another</Button>
               {createdLinkId && (
-                <Button variant="outline" onClick={() => setLocation(`/link/${createdLinkId}/analytics`)}>
-                  <BarChart3 className="h-4 w-4 mr-1.5" />
-                  View Analytics
-                </Button>
+                <>
+                  <Button variant="outline" onClick={() => setLocation(`/link/${createdLinkId}/analytics`)}>
+                    <BarChart3 className="h-4 w-4 mr-1.5" />
+                    View Analytics
+                  </Button>
+                  <Button variant="outline" onClick={() => setLocation(`/link/${createdLinkId}/rules`)}>
+                    <Route className="h-4 w-4 mr-1.5" />
+                    Manage Routing
+                  </Button>
+                </>
               )}
               <Button onClick={() => setLocation(projectId ? `/project/${projectId}` : "/dashboard")}>View Links</Button>
             </div>
@@ -415,6 +557,152 @@ export default function CreateLink() {
                   />
                 </div>
                 {customCodeError ? <p className="text-xs text-destructive">{customCodeError}</p> : <p className="text-xs text-muted-foreground">Use Latin letters, numbers, hyphens, or underscores.</p>}
+              </div>
+
+              <Separator />
+
+              <div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!canUseRouting) {
+                      setLocation("/billing");
+                      return;
+                    }
+                    setShowRouting(!showRouting);
+                    setRoutingError("");
+                  }}
+                  className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                  disabled={linkLimitReached}
+                >
+                  <Route className="h-4 w-4" />
+                  Smart Routing
+                  {!canUseRouting && <span className="text-xs text-primary">(Pro)</span>}
+                  {canUseRouting && (showRouting ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}
+                </button>
+
+                {!canUseRouting ? (
+                  <div className="mt-3 rounded-lg border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+                    Route visitors by country, device, or A/B variant. Smart Routing is available on Pro and Team plans.
+                    <Button type="button" variant="link" size="sm" className="h-auto px-1 text-xs" onClick={() => setLocation("/billing")}>
+                      View plans
+                    </Button>
+                  </div>
+                ) : showRouting ? (
+                  <div className="mt-4 space-y-4 pl-2 border-l-2 border-primary/20">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Initial Routing Rule</Label>
+                      <Select
+                        value={routingType}
+                        onValueChange={(value) => {
+                          setRoutingType(value as "geo" | "device" | "ab");
+                          setRoutingError("");
+                        }}
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="geo">Country targeting</SelectItem>
+                          <SelectItem value="device">Device targeting</SelectItem>
+                          {canUseAbRouting && <SelectItem value="ab">A/B traffic split</SelectItem>}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {routingType === "geo" && (
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Countries</Label>
+                          <Input
+                            value={geoCountries}
+                            onChange={event => { setGeoCountries(event.target.value); setRoutingError(""); }}
+                            placeholder="AZ, AE, US"
+                            className="h-9 text-sm"
+                          />
+                          <p className="text-xs text-muted-foreground">Comma-separated 2-letter ISO country codes.</p>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Redirect these countries to</Label>
+                          <Input
+                            value={geoDestination}
+                            onChange={event => { setGeoDestination(event.target.value); setRoutingError(""); }}
+                            placeholder="https://example.com/azerbaijan"
+                            className="h-9 text-sm"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {routingType === "device" && (
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Device Types</Label>
+                          <div className="flex flex-wrap gap-2">
+                            {["mobile", "tablet", "desktop"].map(device => (
+                              <Button
+                                key={device}
+                                type="button"
+                                size="sm"
+                                variant={deviceTypes.includes(device) ? "default" : "outline"}
+                                className="h-8 capitalize"
+                                onClick={() => {
+                                  setDeviceTypes(current =>
+                                    current.includes(device)
+                                      ? current.filter(item => item !== device)
+                                      : [...current, device]
+                                  );
+                                  setRoutingError("");
+                                }}
+                              >
+                                {device}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Redirect selected devices to</Label>
+                          <Input
+                            value={deviceDestination}
+                            onChange={event => { setDeviceDestination(event.target.value); setRoutingError(""); }}
+                            placeholder="https://m.example.com"
+                            className="h-9 text-sm"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {routingType === "ab" && (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_90px] gap-3">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Variant A URL</Label>
+                            <Input value={abDestinationA} onChange={event => { setAbDestinationA(event.target.value); setRoutingError(""); }} placeholder="https://example.com/a" className="h-9 text-sm" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Weight</Label>
+                            <Input type="number" min={1} value={abWeightA} onChange={event => setAbWeightA(Number(event.target.value) || 0)} className="h-9 text-sm" />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_90px] gap-3">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Variant B URL</Label>
+                            <Input value={abDestinationB} onChange={event => { setAbDestinationB(event.target.value); setRoutingError(""); }} placeholder="https://example.com/b" className="h-9 text-sm" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Weight</Label>
+                            <Input type="number" min={1} value={abWeightB} onChange={event => setAbWeightB(Number(event.target.value) || 0)} className="h-9 text-sm" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {routingError && <p className="text-xs text-destructive">{routingError}</p>}
+                    <p className="text-xs text-muted-foreground">
+                      This creates the first routing rule with the link. Add more rules, Deep Links, and retargeting pixels from Manage Routing after creation.
+                    </p>
+                  </div>
+                ) : null}
               </div>
 
               <Separator />
