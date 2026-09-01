@@ -1,8 +1,8 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { resolveTxt } from "node:dns/promises";
 import net from "node:net";
-import { and, eq, isNull } from "drizzle-orm";
-import { domains, links, projects } from "../drizzle/schema";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import { domains, links, linkRules, projects } from "../drizzle/schema";
 import { createContext } from "./_core/context";
 import { getDb, getLinkByShortCode } from "./db";
 import { checkLimit, countWorkspaceDomains, getPlanConfig } from "./workspace";
@@ -447,6 +447,78 @@ customDomainsApiRouter.patch("/links/:linkId", async (req, res) => {
   }
 });
 
+async function getNativeAssociationFiles(domainId: number) {
+  const database = await getDb();
+  if (!database) return { apple: { applinks: { apps: [], details: [] } }, android: [] as any[] };
+
+  const domainLinks = await database
+    .select({ id: links.id, shortCode: links.shortCode })
+    .from(links)
+    .where(and(eq(links.domainId, domainId), eq(links.status, "active")));
+  if (domainLinks.length === 0) {
+    return { apple: { applinks: { apps: [], details: [] } }, android: [] as any[] };
+  }
+
+  const codeByLinkId = new Map(domainLinks.map(link => [link.id, link.shortCode]));
+  const rules = await database
+    .select({ linkId: linkRules.linkId, config: linkRules.config })
+    .from(linkRules)
+    .where(and(
+      inArray(linkRules.linkId, domainLinks.map(link => link.id)),
+      eq(linkRules.type, "deeplink"),
+      eq(linkRules.enabled, true)
+    ));
+
+  const appleApps = new Map<string, Set<string>>();
+  const androidApps = new Map<string, { packageName: string; fingerprints: string[] }>();
+
+  for (const rule of rules) {
+    const config = (rule.config || {}) as any;
+    const code = codeByLinkId.get(rule.linkId);
+    if (!code) continue;
+
+    const teamId = String(config?.ios?.teamId || "").trim();
+    const bundleId = String(config?.ios?.bundleId || "").trim();
+    if (teamId && bundleId) {
+      const appId = `${teamId}.${bundleId}`;
+      const paths = appleApps.get(appId) || new Set<string>();
+      paths.add(`/${code}`);
+      paths.add(`/${code}/*`);
+      paths.add(`/r/${code}`);
+      paths.add(`/r/${code}/*`);
+      appleApps.set(appId, paths);
+    }
+
+    const packageName = String(config?.android?.packageName || "").trim();
+    const fingerprints = Array.isArray(config?.android?.sha256CertFingerprints)
+      ? config.android.sha256CertFingerprints.map((value: unknown) => String(value).trim().toUpperCase()).filter(Boolean)
+      : [];
+    if (packageName && fingerprints.length > 0) {
+      const key = `${packageName}:${fingerprints.join(",")}`;
+      androidApps.set(key, { packageName, fingerprints });
+    }
+  }
+
+  return {
+    apple: {
+      applinks: {
+        apps: [],
+        details: Array.from(appleApps.entries()).map(([appID, paths]) => ({
+          appID,
+          paths: Array.from(paths),
+        })),
+      },
+    },
+    android: Array.from(androidApps.values()).map(app => ({
+      relation: ["delegate_permission/common.handle_all_urls"],
+      target: {
+        namespace: "android_app",
+        package_name: app.packageName,
+        sha256_cert_fingerprints: app.fingerprints,
+      },
+    })),
+  };
+}
 /**
  * Host-aware rewrite for active branded short domains.
  * A request to https://go.brand.com/code is internally routed through the
@@ -468,6 +540,25 @@ export async function customDomainRoutingMiddleware(req: Request, res: Response,
     if (!domain) return res.status(404).send("Custom domain is not active");
 
     const rawPath = req.path || "/";
+
+    if (rawPath === "/.well-known/apple-app-site-association" || rawPath === "/apple-app-site-association") {
+      const files = await getNativeAssociationFiles(domain.id);
+      return res
+        .status(200)
+        .set("Content-Type", "application/json")
+        .set("Cache-Control", "public, max-age=300")
+        .json(files.apple);
+    }
+
+    if (rawPath === "/.well-known/assetlinks.json") {
+      const files = await getNativeAssociationFiles(domain.id);
+      return res
+        .status(200)
+        .set("Content-Type", "application/json")
+        .set("Cache-Control", "public, max-age=300")
+        .json(files.android);
+    }
+
     if (rawPath === "/") {
       return res.status(200).type("html").send(
         "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Short links powered by Slugly</title></head><body style=\"font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#f6f6fb;color:#17172b\"><main style=\"text-align:center;padding:32px\"><h1 style=\"font-size:22px\">Branded short domain is active</h1><p style=\"color:#666\">Short links on this domain are powered by Slugly.</p></main></body></html>"

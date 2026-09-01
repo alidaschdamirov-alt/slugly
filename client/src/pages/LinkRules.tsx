@@ -14,7 +14,7 @@ import RoutingAnalyticsCard from "@/components/RoutingAnalyticsCard";
 import { toast } from "sonner";
 import { useState } from "react";
 import { useParams } from "wouter";
-import { ArrowLeft, Plus, Trash2, Globe, Smartphone, FlaskConical, Link2, Eye, Loader2 } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Globe, Smartphone, FlaskConical, Link2, Eye, Loader2, Pencil, CheckCircle2 } from "lucide-react";
 
 type RuleType = "geo" | "device" | "ab" | "deeplink" | "pixel";
 
@@ -72,9 +72,15 @@ export default function LinkRules() {
   // Deep link state
   const [iosScheme, setIosScheme] = useState("");
   const [iosAppStore, setIosAppStore] = useState("");
+  const [iosTeamId, setIosTeamId] = useState("");
+  const [iosBundleId, setIosBundleId] = useState("");
   const [androidScheme, setAndroidScheme] = useState("");
   const [androidPlayStore, setAndroidPlayStore] = useState("");
+  const [androidPackageName, setAndroidPackageName] = useState("");
+  const [androidFingerprint, setAndroidFingerprint] = useState("");
   const [webFallback, setWebFallback] = useState("");
+  const [deepLinkDelay, setDeepLinkDelay] = useState(2200);
+  const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
 
   // Pixel state
   const [selectedPixelIds, setSelectedPixelIds] = useState<number[]>([]);
@@ -94,6 +100,17 @@ export default function LinkRules() {
         toast.error(err.message);
       }
     },
+  });
+
+  const editMutation = trpc.linkRules.update.useMutation({
+    onSuccess: () => {
+      toast.success("Deep link updated");
+      setAddDialogOpen(false);
+      setEditingRuleId(null);
+      utils.linkRules.list.invalidate({ linkId });
+      utils.link.analytics.invalidate({ id: linkId, days: routingDays });
+    },
+    onError: (err) => toast.error(err.message),
   });
 
   const deleteMutation = trpc.linkRules.delete.useMutation({
@@ -130,18 +147,51 @@ export default function LinkRules() {
       case "ab":
         config = { variants: abVariants.filter(v => v.destination) };
         break;
-      case "deeplink":
+      case "deeplink": {
+        const fingerprints = androidFingerprint.split(",").map(value => value.trim().toUpperCase()).filter(Boolean);
+        if (!webFallback.trim()) {
+          toast.error("Web fallback URL is required.");
+          return;
+        }
+        if (!iosScheme.trim() && !androidScheme.trim() && !iosTeamId.trim() && !androidPackageName.trim()) {
+          toast.error("Configure at least iOS or Android app opening.");
+          return;
+        }
+        if ((iosTeamId.trim() && !iosBundleId.trim()) || (!iosTeamId.trim() && iosBundleId.trim())) {
+          toast.error("Apple Team ID and Bundle ID must be provided together.");
+          return;
+        }
+        if ((androidPackageName.trim() && fingerprints.length === 0) || (!androidPackageName.trim() && fingerprints.length > 0)) {
+          toast.error("Android package name and SHA-256 fingerprint must be provided together.");
+          return;
+        }
         config = {
-          ios: iosScheme ? { scheme: iosScheme, appStoreUrl: iosAppStore } : undefined,
-          android: androidScheme ? { scheme: androidScheme, playStoreUrl: androidPlayStore } : undefined,
-          webFallback,
+          ios: (iosScheme || iosTeamId || iosBundleId || iosAppStore) ? {
+            scheme: iosScheme.trim() || undefined,
+            appStoreUrl: iosAppStore.trim() || undefined,
+            teamId: iosTeamId.trim().toUpperCase() || undefined,
+            bundleId: iosBundleId.trim() || undefined,
+          } : undefined,
+          android: (androidScheme || androidPackageName || androidFingerprint || androidPlayStore) ? {
+            scheme: androidScheme.trim() || undefined,
+            playStoreUrl: androidPlayStore.trim() || undefined,
+            packageName: androidPackageName.trim() || undefined,
+            sha256CertFingerprints: fingerprints.length ? fingerprints : undefined,
+          } : undefined,
+          webFallback: webFallback.trim(),
+          fallbackDelayMs: Math.min(Math.max(deepLinkDelay || 2200, 800), 8000),
         };
         break;
+      }
       case "pixel":
         config = { pixelIds: selectedPixelIds, delayMs: pixelDelay };
         break;
     }
-    createMutation.mutate({ linkId, type: selectedType, config, priority: (rules?.length || 0) + 1 });
+    if (editingRuleId) {
+      editMutation.mutate({ id: editingRuleId, linkId, config });
+    } else {
+      createMutation.mutate({ linkId, type: selectedType, config, priority: (rules?.length || 0) + 1 });
+    }
   };
 
   if (!user) return null;
@@ -204,6 +254,32 @@ export default function LinkRules() {
                             checked={rule.enabled}
                             onCheckedChange={(checked) => toggleMutation.mutate({ id: rule.id, linkId, enabled: checked })}
                           />
+                          {rule.type === "deeplink" && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              title="Edit mobile deep link"
+                              onClick={() => {
+                                const cfg = rule.config || {};
+                                setEditingRuleId(rule.id);
+                                setSelectedType("deeplink");
+                                setIosScheme(cfg.ios?.scheme || "");
+                                setIosAppStore(cfg.ios?.appStoreUrl || "");
+                                setIosTeamId(cfg.ios?.teamId || "");
+                                setIosBundleId(cfg.ios?.bundleId || "");
+                                setAndroidScheme(cfg.android?.scheme || "");
+                                setAndroidPlayStore(cfg.android?.playStoreUrl || "");
+                                setAndroidPackageName(cfg.android?.packageName || "");
+                                setAndroidFingerprint((cfg.android?.sha256CertFingerprints || []).join(", "));
+                                setWebFallback(cfg.webFallback || "");
+                                setDeepLinkDelay(cfg.fallbackDelayMs || 2200);
+                                setAddDialogOpen(true);
+                              }}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => deleteMutation.mutate({ id: rule.id, linkId })}>
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
@@ -226,7 +302,7 @@ export default function LinkRules() {
             )}
 
             {/* Add rule button */}
-            <Button onClick={() => setAddDialogOpen(true)}>
+            <Button onClick={() => { setEditingRuleId(null); setAddDialogOpen(true); }}>
               <Plus className="mr-2 h-4 w-4" />
               Add Rule
             </Button>
@@ -237,15 +313,15 @@ export default function LinkRules() {
         <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
           <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Add Redirect Rule</DialogTitle>
+              <DialogTitle>{editingRuleId ? "Edit Mobile Deep Link" : "Add Redirect Rule"}</DialogTitle>
               <DialogDescription>
-                Configure advanced redirect behavior. Rules are available on Pro and higher plans.
+                {editingRuleId ? "Update app opening, store fallbacks, and native Universal/App Link association." : "Configure advanced redirect behavior. Rules are available on Pro and higher plans."}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div>
                 <Label>Rule Type</Label>
-                <Select value={selectedType} onValueChange={(v) => setSelectedType(v as RuleType)}>
+                <Select value={selectedType} onValueChange={(v) => setSelectedType(v as RuleType)} disabled={!!editingRuleId}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -335,32 +411,53 @@ export default function LinkRules() {
 
               {/* Deep link config */}
               {selectedType === "deeplink" && (
-                <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-5">
+                  <div className="rounded-lg border p-4 space-y-3">
                     <div>
-                      <Label>iOS Scheme</Label>
-                      <Input value={iosScheme} onChange={(e) => setIosScheme(e.target.value)} placeholder="myapp://path" />
+                      <p className="text-sm font-medium">iOS</p>
+                      <p className="text-xs text-muted-foreground">Custom scheme is the fallback opener. Team ID + Bundle ID activate Apple Universal Links on a verified custom domain.</p>
                     </div>
-                    <div>
-                      <Label>App Store URL</Label>
-                      <Input value={iosAppStore} onChange={(e) => setIosAppStore(e.target.value)} placeholder="https://apps.apple.com/..." />
-                    </div>
-                    <div>
-                      <Label>Android Scheme</Label>
-                      <Input value={androidScheme} onChange={(e) => setAndroidScheme(e.target.value)} placeholder="myapp://path" />
-                    </div>
-                    <div>
-                      <Label>Play Store URL</Label>
-                      <Input value={androidPlayStore} onChange={(e) => setAndroidPlayStore(e.target.value)} placeholder="https://play.google.com/..." />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div><Label>App Scheme</Label><Input value={iosScheme} onChange={(e) => setIosScheme(e.target.value)} placeholder="myapp://product/123" /></div>
+                      <div><Label>App Store URL</Label><Input value={iosAppStore} onChange={(e) => setIosAppStore(e.target.value)} placeholder="https://apps.apple.com/app/..." /></div>
+                      <div><Label>Apple Team ID</Label><Input value={iosTeamId} onChange={(e) => setIosTeamId(e.target.value.toUpperCase())} placeholder="ABCDE12345" /></div>
+                      <div><Label>Bundle ID</Label><Input value={iosBundleId} onChange={(e) => setIosBundleId(e.target.value)} placeholder="com.company.app" /></div>
                     </div>
                   </div>
-                  <div>
-                    <Label>Web Fallback URL</Label>
-                    <Input value={webFallback} onChange={(e) => setWebFallback(e.target.value)} placeholder="https://example.com" />
+
+                  <div className="rounded-lg border p-4 space-y-3">
+                    <div>
+                      <p className="text-sm font-medium">Android</p>
+                      <p className="text-xs text-muted-foreground">Package + SHA-256 signing fingerprint activate Android App Links on a verified custom domain.</p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div><Label>App Scheme</Label><Input value={androidScheme} onChange={(e) => setAndroidScheme(e.target.value)} placeholder="myapp://product/123" /></div>
+                      <div><Label>Play Store URL</Label><Input value={androidPlayStore} onChange={(e) => setAndroidPlayStore(e.target.value)} placeholder="https://play.google.com/store/apps/details?id=..." /></div>
+                      <div><Label>Package Name</Label><Input value={androidPackageName} onChange={(e) => setAndroidPackageName(e.target.value)} placeholder="com.company.app" /></div>
+                      <div><Label>SHA-256 Fingerprint</Label><Input value={androidFingerprint} onChange={(e) => setAndroidFingerprint(e.target.value)} placeholder="AA:BB:CC:... (comma-separate multiple)" /></div>
+                    </div>
                   </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_130px] gap-3">
+                    <div><Label>Web Fallback URL *</Label><Input value={webFallback} onChange={(e) => setWebFallback(e.target.value)} placeholder="https://example.com/product/123" /></div>
+                    <div><Label>Fallback Delay</Label><Input type="number" min={800} max={8000} step={100} value={deepLinkDelay} onChange={(e) => setDeepLinkDelay(parseInt(e.target.value) || 2200)} /></div>
+                  </div>
+
+                  {routingAnalytics?.customDomain ? (
+                    <div className="rounded-lg border border-green-200 bg-green-50/70 p-3 dark:border-green-900/50 dark:bg-green-950/20">
+                      <div className="flex items-center gap-2 text-sm font-medium text-green-800 dark:text-green-300"><CheckCircle2 className="h-4 w-4" /> Native association available</div>
+                      <p className="mt-1 text-xs text-muted-foreground">Slugly automatically serves the Apple and Android association files for this branded domain.</p>
+                      <code className="mt-2 block break-all text-xs">https://{routingAnalytics.customDomain}/.well-known/apple-app-site-association</code>
+                      <code className="mt-1 block break-all text-xs">https://{routingAnalytics.customDomain}/.well-known/assetlinks.json</code>
+                      <p className="mt-2 text-xs text-muted-foreground">iOS entitlement: <strong>applinks:{routingAnalytics.customDomain}</strong>. Android: use the same host in your HTTPS intent-filter with android:autoVerify="true".</p>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+                      Custom schemes and store fallback work on the default Slugly URL. Apple Universal Links and Android App Links require this link to use a verified custom domain.
+                    </div>
+                  )}
                 </div>
               )}
-
               {/* Pixel config */}
               {selectedType === "pixel" && (
                 <div className="space-y-3">
@@ -390,8 +487,8 @@ export default function LinkRules() {
                 </div>
               )}
 
-              <Button className="w-full" onClick={handleCreate} disabled={createMutation.isPending}>
-                {createMutation.isPending ? "Creating..." : "Create Rule"}
+              <Button className="w-full" onClick={handleCreate} disabled={createMutation.isPending || editMutation.isPending}>
+                {createMutation.isPending || editMutation.isPending ? "Saving..." : editingRuleId ? "Save Deep Link" : "Create Rule"}
               </Button>
             </div>
           </DialogContent>
