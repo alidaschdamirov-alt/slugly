@@ -214,6 +214,69 @@ export const productQrs = mysqlTable("product_qrs", {
 export type ProductQr = typeof productQrs.$inferSelect;
 export type InsertProductQr = typeof productQrs.$inferInsert;
 
+// ============ PAGES (LINK-IN-BIO + LANDING PAGES) ============
+
+export const pages = mysqlTable("pages", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  userId: int("userId").notNull(),
+  type: mysqlEnum("type", ["bio", "landing"]).notNull(),
+  slug: varchar("slug", { length: 64 }).notNull().unique(),
+  title: varchar("title", { length: 255 }).notNull(),
+  headline: varchar("headline", { length: 255 }),
+  description: text("description"),
+  avatarUrl: text("avatarUrl"),
+  heroImageUrl: text("heroImageUrl"),
+  accentColor: varchar("accentColor", { length: 7 }).default("#5A3FF0").notNull(),
+  backgroundColor: varchar("backgroundColor", { length: 7 }).default("#F7F7FC").notNull(),
+  textColor: varchar("textColor", { length: 7 }).default("#14152B").notNull(),
+  buttonStyle: mysqlEnum("buttonStyle", ["rounded", "pill", "square"]).default("rounded").notNull(),
+  domainId: int("domainId"),
+  status: mysqlEnum("status", ["draft", "published"]).default("draft").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  workspaceIdx: index("pages_workspace_idx").on(table.workspaceId),
+  domainIdx: index("pages_domain_idx").on(table.domainId),
+}));
+
+export type Page = typeof pages.$inferSelect;
+export type InsertPage = typeof pages.$inferInsert;
+
+export const pageButtons = mysqlTable("page_buttons", {
+  id: int("id").autoincrement().primaryKey(),
+  pageId: int("pageId").notNull(),
+  linkId: int("linkId").notNull(),
+  label: varchar("label", { length: 255 }).notNull(),
+  subtitle: varchar("subtitle", { length: 500 }),
+  style: mysqlEnum("style", ["primary", "secondary", "outline"]).default("primary").notNull(),
+  position: int("position").default(0).notNull(),
+  enabled: boolean("enabled").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  pageIdx: index("page_buttons_page_idx").on(table.pageId),
+  linkIdx: index("page_buttons_link_idx").on(table.linkId),
+}));
+
+export type PageButton = typeof pageButtons.$inferSelect;
+export type InsertPageButton = typeof pageButtons.$inferInsert;
+
+export const pageViews = mysqlTable("page_views", {
+  id: int("id").autoincrement().primaryKey(),
+  pageId: int("pageId").notNull(),
+  timestamp: bigint("timestamp", { mode: "number" }).notNull(),
+  country: varchar("country", { length: 100 }),
+  deviceType: varchar("deviceType", { length: 50 }),
+  isBot: boolean("isBot").default(false).notNull(),
+  ipHash: varchar("ipHash", { length: 64 }),
+}, (table) => ({
+  pageTimestampIdx: index("page_views_page_ts_idx").on(table.pageId, table.timestamp),
+}));
+
+export type PageView = typeof pageViews.$inferSelect;
+export type InsertPageView = typeof pageViews.$inferInsert;
+
 // ============ UTM TEMPLATES ============
 
 export const utmTemplates = mysqlTable("utm_templates", {
