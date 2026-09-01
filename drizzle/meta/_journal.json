@@ -78,6 +78,13 @@
       "when": 1782070472983,
       "tag": "0010_same_shaman",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1788251400000,
+      "tag": "0011_deeplink_funnel",
+      "breakpoints": true
     }
   ]
 }
