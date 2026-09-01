@@ -410,6 +410,62 @@ export async function getClickStats(linkId: number) {
   return { countries: countriesResult, devices: devicesResult, browsers: browsersResult, referrers: referrersResult };
 }
 
+export async function getRoutingClickStats(linkId: number, days: number = 30) {
+  const db = await getDb();
+  if (!db) {
+    return { totalHumanClicks: 0, countries: [], devices: [], variants: [] };
+  }
+
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const baseFilter = and(
+    eq(clicks.linkId, linkId),
+    gte(clicks.timestamp, since),
+    eq(clicks.isBot, false)
+  );
+
+  const [totalResult, countriesResult, devicesResult, variantsResult] =
+    await Promise.all([
+      db
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(clicks)
+        .where(baseFilter),
+      db
+        .select({
+          value: clicks.country,
+          count: sql<number>`COUNT(*)`,
+        })
+        .from(clicks)
+        .where(and(baseFilter, sql`${clicks.country} IS NOT NULL`))
+        .groupBy(clicks.country)
+        .orderBy(desc(sql`COUNT(*)`)),
+      db
+        .select({
+          value: clicks.deviceType,
+          count: sql<number>`COUNT(*)`,
+        })
+        .from(clicks)
+        .where(and(baseFilter, sql`${clicks.deviceType} IS NOT NULL`))
+        .groupBy(clicks.deviceType)
+        .orderBy(desc(sql`COUNT(*)`)),
+      db
+        .select({
+          value: clicks.variant,
+          count: sql<number>`COUNT(*)`,
+        })
+        .from(clicks)
+        .where(and(baseFilter, sql`${clicks.variant} IS NOT NULL AND ${clicks.variant} != ''`))
+        .groupBy(clicks.variant)
+        .orderBy(desc(sql`COUNT(*)`)),
+    ]);
+
+  return {
+    totalHumanClicks: totalResult[0]?.count ?? 0,
+    countries: countriesResult,
+    devices: devicesResult,
+    variants: variantsResult,
+  };
+}
+
 export async function getProjectClickStats(projectId: number, days: number = 30) {
   const db = await getDb();
   if (!db) return { totalClicks: 0, uniqueClicks: 0, clicksOverTime: [], topLinks: [] };
