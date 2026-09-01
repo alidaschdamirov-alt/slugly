@@ -92,6 +92,13 @@
       "when": 1788253200000,
       "tag": "0012_gs1_product_qr",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "5",
+      "when": 1788268200000,
+      "tag": "0013_pages_product",
+      "breakpoints": true
     }
   ]
 }
