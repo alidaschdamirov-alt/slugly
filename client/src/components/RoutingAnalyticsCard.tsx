@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { FlaskConical, Globe, Monitor, Route } from "lucide-react";
+import { FlaskConical, Globe, Monitor, Route, Smartphone, Store, Globe2 } from "lucide-react";
 
 type StatRow = {
   value: string | null;
@@ -13,6 +13,14 @@ type RoutingStats = {
   countries: StatRow[];
   devices: StatRow[];
   variants: StatRow[];
+  deepLinks?: {
+    attempts: number;
+    appOpens: number;
+    storeFallbacks: number;
+    webFallbacks: number;
+    iosEvents: number;
+    androidEvents: number;
+  };
 };
 
 type RoutingRule = {
@@ -108,6 +116,14 @@ export default function RoutingAnalyticsCard({
     countries: [],
     devices: [],
     variants: [],
+    deepLinks: {
+      attempts: 0,
+      appOpens: 0,
+      storeFallbacks: 0,
+      webFallbacks: 0,
+      iosEvents: 0,
+      androidEvents: 0,
+    },
   };
 
   return (
@@ -303,6 +319,61 @@ export default function RoutingAnalyticsCard({
             );
           }
 
+          if (rule.type === "deeplink") {
+            const deep = routingStats.deepLinks || {
+              attempts: 0,
+              appOpens: 0,
+              storeFallbacks: 0,
+              webFallbacks: 0,
+              iosEvents: 0,
+              androidEvents: 0,
+            };
+            const completed = deep.appOpens + deep.storeFallbacks + deep.webFallbacks;
+            const appOpenRate = deep.attempts > 0
+              ? Math.round((deep.appOpens / deep.attempts) * 100)
+              : 0;
+
+            return (
+              <section key={rule.id}>
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <Smartphone className="h-4 w-4 text-primary" />
+                  <h4 className="text-sm font-medium">Mobile Deep Link funnel</h4>
+                  <Badge variant="outline" className="text-[10px]">priority {rule.priority}</Badge>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-lg border bg-background px-3 py-3">
+                    <p className="text-[11px] text-muted-foreground">App attempts</p>
+                    <p className="mt-1 text-lg font-semibold tabular-nums">{deep.attempts.toLocaleString()}</p>
+                    <p className="text-[10px] text-muted-foreground">Slugly tried to open the app</p>
+                  </div>
+                  <div className="rounded-lg border bg-background px-3 py-3">
+                    <p className="flex items-center gap-1 text-[11px] text-muted-foreground"><Smartphone className="h-3 w-3" /> App opened</p>
+                    <p className="mt-1 text-lg font-semibold tabular-nums">{deep.appOpens.toLocaleString()}</p>
+                    <p className="text-[10px] text-muted-foreground">{deep.attempts > 0 ? `${appOpenRate}% of attempts` : "Requires app callback"}</p>
+                  </div>
+                  <div className="rounded-lg border bg-background px-3 py-3">
+                    <p className="flex items-center gap-1 text-[11px] text-muted-foreground"><Store className="h-3 w-3" /> Store fallback</p>
+                    <p className="mt-1 text-lg font-semibold tabular-nums">{deep.storeFallbacks.toLocaleString()}</p>
+                    <p className="text-[10px] text-muted-foreground">App Store / Play Store</p>
+                  </div>
+                  <div className="rounded-lg border bg-background px-3 py-3">
+                    <p className="flex items-center gap-1 text-[11px] text-muted-foreground"><Globe2 className="h-3 w-3" /> Web fallback</p>
+                    <p className="mt-1 text-lg font-semibold tabular-nums">{deep.webFallbacks.toLocaleString()}</p>
+                    <p className="text-[10px] text-muted-foreground">Continued in browser</p>
+                  </div>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                  <span>iOS events: {deep.iosEvents.toLocaleString()} · Android events: {deep.androidEvents.toLocaleString()}</span>
+                  {deep.attempts > 0 && deep.appOpens === 0 && (
+                    <span>Connect the app callback to measure confirmed opens.</span>
+                  )}
+                  {completed > deep.attempts && (
+                    <span>Native Universal/App Link opens can be reported without a browser attempt.</span>
+                  )}
+                </div>
+              </section>
+            );
+          }
           return (
             <section key={rule.id} className="rounded-lg border bg-muted/20 px-3 py-3">
               <div className="flex items-center justify-between gap-3">

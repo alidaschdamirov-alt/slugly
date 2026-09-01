@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import FeatureGateCard from "@/components/FeatureGateCard";
 import RoutingAnalyticsCard from "@/components/RoutingAnalyticsCard";
+import MobileDeepLinkGuide from "@/components/MobileDeepLinkGuide";
 import { toast } from "sonner";
 import { useState } from "react";
 import { useParams } from "wouter";
@@ -22,7 +23,7 @@ const RULE_LABELS: Record<RuleType, { label: string; icon: any; description: str
   geo: { label: "Geo-targeting", icon: Globe, description: "Redirect based on visitor's country" },
   device: { label: "Device targeting", icon: Smartphone, description: "Redirect based on device type" },
   ab: { label: "A/B Test", icon: FlaskConical, description: "Split traffic between variants" },
-  deeplink: { label: "Deep Link", icon: Link2, description: "Open mobile app with web fallback" },
+  deeplink: { label: "Mobile Deep Link", icon: Link2, description: "Open iOS/Android app, then store or web fallback" },
   pixel: { label: "Retargeting Pixel", icon: Eye, description: "Fire tracking pixels before redirect" },
 };
 
@@ -51,6 +52,8 @@ export default function LinkRules() {
     { id: linkId, days: routingDays },
     { enabled: !!linkId && canUseRedirectRules }
   );
+
+  const deepLinkRule = (rules || []).find((rule: any) => rule.type === "deeplink" && rule.enabled);
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<RuleType>("geo");
@@ -220,6 +223,14 @@ export default function LinkRules() {
           />
         ) : (
           <>
+            {deepLinkRule && (
+              <MobileDeepLinkGuide
+                customDomain={routingAnalytics?.customDomain}
+                shortCode={routingAnalytics?.link?.shortCode}
+                config={deepLinkRule.config}
+              />
+            )}
+
             <RoutingAnalyticsCard
               rules={(routingAnalytics?.routingRules || rules || []) as any}
               stats={routingAnalytics?.routingStats as any}
@@ -412,6 +423,15 @@ export default function LinkRules() {
               {/* Deep link config */}
               {selectedType === "deeplink" && (
                 <div className="space-y-5">
+                  <div className="rounded-lg border bg-muted/30 p-3">
+                    <p className="text-sm font-medium">How it works</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Short link → open the app → if unavailable, send to App Store / Play Store → otherwise continue on the web fallback.
+                    </p>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      For the most reliable native opening, connect a verified custom domain and configure Universal Links (iOS) / App Links (Android).
+                    </p>
+                  </div>
                   <div className="rounded-lg border p-4 space-y-3">
                     <div>
                       <p className="text-sm font-medium">iOS</p>

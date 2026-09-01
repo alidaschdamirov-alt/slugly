@@ -757,21 +757,46 @@ export default function CreateLink() {
                     )}
 
                     {routingType === "deeplink" && (
-                      <div className="space-y-3">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <TextField label="iOS App Scheme" value={deepIosScheme} onChange={setDeepIosScheme} placeholder="myapp://product/123" disabled={linkLimitReached} />
-                          <TextField label="App Store URL" value={deepIosStore} onChange={setDeepIosStore} placeholder="https://apps.apple.com/app/..." disabled={linkLimitReached} />
-                          <TextField label="Apple Team ID" value={deepIosTeamId} onChange={(value) => setDeepIosTeamId(value.toUpperCase())} placeholder="ABCDE12345" disabled={linkLimitReached} />
-                          <TextField label="Bundle ID" value={deepIosBundleId} onChange={setDeepIosBundleId} placeholder="com.company.app" disabled={linkLimitReached} />
-                          <TextField label="Android App Scheme" value={deepAndroidScheme} onChange={setDeepAndroidScheme} placeholder="myapp://product/123" disabled={linkLimitReached} />
-                          <TextField label="Play Store URL" value={deepAndroidStore} onChange={setDeepAndroidStore} placeholder="https://play.google.com/store/apps/details?id=..." disabled={linkLimitReached} />
-                          <TextField label="Android Package" value={deepAndroidPackage} onChange={setDeepAndroidPackage} placeholder="com.company.app" disabled={linkLimitReached} />
-                          <TextField label="SHA-256 Fingerprint" value={deepAndroidFingerprint} onChange={setDeepAndroidFingerprint} placeholder="AA:BB:CC:..." disabled={linkLimitReached} />
+                      <div className="space-y-4">
+                        <div className="rounded-lg border bg-muted/30 p-3">
+                          <p className="text-xs font-medium">Mobile Deep Link flow</p>
+                          <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground md:grid-cols-4">
+                            <div className="rounded border bg-background p-2">1. Short link</div>
+                            <div className="rounded border bg-background p-2">2. Open app</div>
+                            <div className="rounded border bg-background p-2">3. App Store / Play Store</div>
+                            <div className="rounded border bg-background p-2">4. Web fallback</div>
+                          </div>
+                          <p className="mt-2 text-[11px] text-muted-foreground">
+                            You can start with only an app scheme + fallback. Add native app IDs and a verified custom domain later for Universal Links / Android App Links.
+                          </p>
                         </div>
+
+                        <div>
+                          <p className="mb-2 text-xs font-medium">iOS</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <TextField label="App Scheme" value={deepIosScheme} onChange={setDeepIosScheme} placeholder="myapp://product/123" disabled={linkLimitReached} />
+                            <TextField label="App Store URL" value={deepIosStore} onChange={setDeepIosStore} placeholder="https://apps.apple.com/app/..." disabled={linkLimitReached} />
+                            <TextField label="Apple Team ID" value={deepIosTeamId} onChange={(value) => setDeepIosTeamId(value.toUpperCase())} placeholder="ABCDE12345" disabled={linkLimitReached} />
+                            <TextField label="Bundle ID" value={deepIosBundleId} onChange={setDeepIosBundleId} placeholder="com.company.app" disabled={linkLimitReached} />
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="mb-2 text-xs font-medium">Android</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <TextField label="App Scheme" value={deepAndroidScheme} onChange={setDeepAndroidScheme} placeholder="myapp://product/123" disabled={linkLimitReached} />
+                            <TextField label="Play Store URL" value={deepAndroidStore} onChange={setDeepAndroidStore} placeholder="https://play.google.com/store/apps/details?id=..." disabled={linkLimitReached} />
+                            <TextField label="Package Name" value={deepAndroidPackage} onChange={setDeepAndroidPackage} placeholder="com.company.app" disabled={linkLimitReached} />
+                            <TextField label="SHA-256 Certificate Fingerprint" value={deepAndroidFingerprint} onChange={setDeepAndroidFingerprint} placeholder="AA:BB:CC:..." disabled={linkLimitReached} />
+                          </div>
+                        </div>
+
                         <TextField label="Web Fallback" value={deepWebFallback} onChange={setDeepWebFallback} placeholder={url || "https://example.com"} disabled={linkLimitReached} />
-                        <p className="text-xs text-muted-foreground">
-                          Custom schemes work on any Slugly link. Apple Universal Links and Android App Links are activated automatically when this link uses a verified custom domain and native app IDs are provided.
-                        </p>
+                        <div className="rounded-lg border p-3 text-[11px] text-muted-foreground">
+                          {selectedDomainId !== "slugly"
+                            ? "Verified branded domain selected: native Universal/App Link association can be enabled when the app IDs above are filled in."
+                            : "Using slugly.io: custom schemes and store/web fallback work, but native Universal Links / App Links require a verified custom domain."}
+                        </div>
                       </div>
                     )}
                     {routingError && <p className="text-xs text-destructive">{routingError}</p>}

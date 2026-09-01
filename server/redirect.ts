@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
-import { getLinkByShortCode, recordClick, getSiteSetting } from "./db";
-import { createHash } from "crypto";
+import { getLinkByShortCode, recordClick, getSiteSetting, recordDeepLinkEvent } from "./db";
+import { createHash, randomBytes } from "crypto";
 import { getRulesForLink, evaluateRules, getPixelsByIds } from "./rules";
 import type { EvaluationContext } from "./rules";
 import geoip from "geoip-lite";
@@ -244,13 +244,40 @@ redirectRouter.get("/:shortCode([a-zA-Z0-9_-]{3,32})", async (req: Request, res:
     // If it reaches us, try the custom scheme and then use store/web fallback.
     if (evalResult.isDeepLink && evalResult.deepLink) {
       recordCurrentClick();
+      const sessionId = randomBytes(12).toString("hex");
+      const appendDeepLinkTracking = (target: string) => {
+        if (!target) return target;
+        try {
+          const targetUrl = new URL(target);
+          targetUrl.searchParams.set("slugly_dl_session", sessionId);
+          targetUrl.searchParams.set("slugly_code", shortCode);
+          return targetUrl.toString();
+        } catch {
+          return target;
+        }
+      };
       const deepLink = {
         ...evalResult.deepLink,
-        scheme: evalResult.deepLink.scheme ? appendRedirectParams(evalResult.deepLink.scheme) : undefined,
-        storeUrl: evalResult.deepLink.storeUrl ? appendRedirectParams(evalResult.deepLink.storeUrl) : undefined,
-        webFallback: appendRedirectParams(evalResult.deepLink.webFallback || destinationUrl),
+        scheme: evalResult.deepLink.scheme ? appendDeepLinkTracking(appendRedirectParams(evalResult.deepLink.scheme)) : undefined,
+        storeUrl: evalResult.deepLink.storeUrl ? appendDeepLinkTracking(appendRedirectParams(evalResult.deepLink.storeUrl)) : undefined,
+        webFallback: appendDeepLinkTracking(appendRedirectParams(evalResult.deepLink.webFallback || destinationUrl)),
       };
-      return res.status(200).set("Cache-Control", "no-store").send(renderDeepLinkPage(deepLink, shortCode));
+
+      if (!isBotHit) {
+        recordDeepLinkEvent({
+          linkId: link.id,
+          sessionId,
+          eventType: "attempt",
+          platform: evalResult.deepLink.platform,
+          source: "redirect",
+          timestamp: now,
+        }).catch(err => console.error("[DeepLinks] Failed to record attempt:", err));
+      }
+
+      return res
+        .status(200)
+        .set("Cache-Control", "no-store")
+        .send(renderDeepLinkPage(deepLink, shortCode, sessionId));
     }
 
     // Pixel interstitial: fire tracking pixels before redirecting.
@@ -363,11 +390,13 @@ function renderDeepLinkPage(
     webFallback: string;
     fallbackDelayMs: number;
   },
-  shortCode: string
+  shortCode: string,
+  sessionId: string
 ) {
   const platformLabel = deepLink.platform === "ios" ? "iOS" : "Android";
   const storeLabel = deepLink.platform === "ios" ? "App Store" : "Play Store";
   const fallbackTarget = deepLink.storeUrl || deepLink.webFallback;
+  const fallbackEvent = deepLink.storeUrl ? "store_fallback" : "web_fallback";
   const escapedWebFallback = escapeHtml(deepLink.webFallback);
   const escapedStoreUrl = deepLink.storeUrl ? escapeHtml(deepLink.storeUrl) : "";
   const escapedScheme = deepLink.scheme ? escapeHtml(deepLink.scheme) : "";
@@ -389,25 +418,60 @@ h1{font-size:1.35rem;margin:0 0 8px;font-weight:650}p{color:#6b7280;line-height:
 <p>Slugly is trying to open this link in the ${platformLabel} app. If it is not installed, the configured ${storeLabel} or web fallback will open.</p>
 <div class="actions">
 ${deepLink.scheme ? `<a class="btn primary" id="open-app" href="${escapedScheme}">Open app</a>` : ""}
-${deepLink.storeUrl ? `<a class="btn secondary" href="${escapedStoreUrl}">Get the app</a>` : ""}
-<a class="btn secondary" href="${escapedWebFallback}">Continue on web</a>
+${deepLink.storeUrl ? `<a class="btn secondary" id="store-fallback" href="${escapedStoreUrl}">Get the app</a>` : ""}
+<a class="btn secondary" id="web-fallback" href="${escapedWebFallback}">Continue on web</a>
 </div><p class="small">Short link: ${escapedCode}</p></main>
 <script>
 (function(){
   var scheme = ${JSON.stringify(deepLink.scheme || "")};
   var fallback = ${JSON.stringify(fallbackTarget)};
+  var fallbackEvent = ${JSON.stringify(fallbackEvent)};
   var delay = ${delayMs};
+  var sessionId = ${JSON.stringify(sessionId)};
+  var shortCode = ${JSON.stringify(shortCode)};
+  var platform = ${JSON.stringify(deepLink.platform)};
   var leftPage = false;
   var timer = null;
+
+  function track(eventName) {
+    try {
+      fetch('/api/deeplinks/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'omit',
+        keepalive: true,
+        body: JSON.stringify({
+          shortCode: shortCode,
+          sessionId: sessionId,
+          event: eventName,
+          platform: platform,
+          source: 'interstitial'
+        })
+      }).catch(function(){});
+    } catch (_) {}
+  }
+
   function cancelFallback(){ leftPage = true; if (timer) clearTimeout(timer); }
   document.addEventListener('visibilitychange', function(){ if (document.hidden) cancelFallback(); });
   window.addEventListener('pagehide', cancelFallback);
   window.addEventListener('blur', cancelFallback);
+
+  var storeButton = document.getElementById('store-fallback');
+  if (storeButton) storeButton.addEventListener('click', function(){ track('store_fallback'); });
+  var webButton = document.getElementById('web-fallback');
+  if (webButton) webButton.addEventListener('click', function(){ track('web_fallback'); });
+
+  function goFallback() {
+    if (leftPage) return;
+    track(fallbackEvent);
+    setTimeout(function(){ if (!leftPage) window.location.replace(fallback); }, 60);
+  }
+
   if (scheme) {
-    timer = setTimeout(function(){ if (!leftPage) window.location.replace(fallback); }, delay);
+    timer = setTimeout(goFallback, delay);
     setTimeout(function(){ if (!leftPage) window.location.href = scheme; }, 80);
   } else {
-    timer = setTimeout(function(){ if (!leftPage) window.location.replace(fallback); }, 250);
+    timer = setTimeout(goFallback, 250);
   }
 })();
 </script></body></html>`;

@@ -30,6 +30,7 @@ import {
   rateLimits,
   notifications,
   notificationRecipients,
+  deepLinkEvents,
 } from "../drizzle/schema";
 import type {
   InsertProject,
@@ -39,6 +40,7 @@ import type {
   InsertAuditLogEntry,
   InsertNotification,
   InsertNotificationRecipient,
+  InsertDeepLinkEvent,
 } from "../drizzle/schema";
 import { ENV, isProtectedAdminEmail } from "./_core/env";
 import { getDatabaseUrl } from "./_core/databaseUrl";
@@ -410,6 +412,75 @@ export async function getClickStats(linkId: number) {
   return { countries: countriesResult, devices: devicesResult, browsers: browsersResult, referrers: referrersResult };
 }
 
+export async function recordDeepLinkEvent(data: InsertDeepLinkEvent) {
+  const db = await getDb();
+  if (!db) return;
+
+  const existing = await db
+    .select({ id: deepLinkEvents.id })
+    .from(deepLinkEvents)
+    .where(and(
+      eq(deepLinkEvents.linkId, data.linkId),
+      eq(deepLinkEvents.sessionId, data.sessionId),
+      eq(deepLinkEvents.eventType, data.eventType)
+    ))
+    .limit(1);
+
+  if (existing.length > 0) return;
+  await db.insert(deepLinkEvents).values(data);
+}
+
+export async function getDeepLinkEventStats(linkId: number, days: number = 30) {
+  const db = await getDb();
+  if (!db) {
+    return {
+      attempts: 0,
+      appOpens: 0,
+      storeFallbacks: 0,
+      webFallbacks: 0,
+      iosEvents: 0,
+      androidEvents: 0,
+    };
+  }
+
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const baseFilter = and(
+    eq(deepLinkEvents.linkId, linkId),
+    gte(deepLinkEvents.timestamp, since)
+  );
+
+  const [events, platforms] = await Promise.all([
+    db
+      .select({
+        value: deepLinkEvents.eventType,
+        count: sql<number>`COUNT(*)`,
+      })
+      .from(deepLinkEvents)
+      .where(baseFilter)
+      .groupBy(deepLinkEvents.eventType),
+    db
+      .select({
+        value: deepLinkEvents.platform,
+        count: sql<number>`COUNT(*)`,
+      })
+      .from(deepLinkEvents)
+      .where(baseFilter)
+      .groupBy(deepLinkEvents.platform),
+  ]);
+
+  const byEvent = Object.fromEntries(events.map(row => [row.value, Number(row.count || 0)]));
+  const byPlatform = Object.fromEntries(platforms.map(row => [row.value, Number(row.count || 0)]));
+
+  return {
+    attempts: byEvent.attempt || 0,
+    appOpens: byEvent.app_open || 0,
+    storeFallbacks: byEvent.store_fallback || 0,
+    webFallbacks: byEvent.web_fallback || 0,
+    iosEvents: byPlatform.ios || 0,
+    androidEvents: byPlatform.android || 0,
+  };
+}
+
 export async function getRoutingClickStats(linkId: number, days: number = 30) {
   const db = await getDb();
   if (!db) {
@@ -458,11 +529,14 @@ export async function getRoutingClickStats(linkId: number, days: number = 30) {
         .orderBy(desc(sql`COUNT(*)`)),
     ]);
 
+  const deepLinks = await getDeepLinkEventStats(linkId, days);
+
   return {
     totalHumanClicks: totalResult[0]?.count ?? 0,
     countries: countriesResult,
     devices: devicesResult,
     variants: variantsResult,
+    deepLinks,
   };
 }
 
