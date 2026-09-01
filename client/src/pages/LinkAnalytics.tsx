@@ -192,6 +192,10 @@ export default function LinkAnalytics() {
                   <QrCode className="h-3.5 w-3.5 mr-1.5" />
                   QR
                 </Button>
+                <Button variant="outline" size="sm" onClick={() => setLocation(`/link/${linkId}/rules`)} title="Configure country, device, A/B, deep-link, and pixel routing">
+                  <Globe className="h-3.5 w-3.5 mr-1.5" />
+                  Routing
+                </Button>
                 <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
                   <Pencil className="h-3.5 w-3.5 mr-1.5" />
                   Edit
