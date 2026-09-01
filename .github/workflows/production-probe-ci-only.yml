@@ -1,0 +1,31 @@
+name: Production Probe CI Only
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  probe-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Probe current main deployment
+        env:
+          PRODUCTION_BASE_URL: https://slugly.io
+          EXPECTED_COMMIT: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_NODE_MAJOR: "24"
+          SMOKE_MAX_ATTEMPTS: "36"
+          SMOKE_DELAY_MS: "20000"
+        run: node scripts/smoke-production.mjs
