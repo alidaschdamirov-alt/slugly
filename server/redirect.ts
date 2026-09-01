@@ -355,28 +355,62 @@ a{color:#5A3FF0;text-decoration:none}a:hover{text-decoration:underline}</style>
 }
 
 // ============ DEEP LINK INTERSTITIAL ============
-function renderDeepLinkPage(scheme: string, webFallback: string, shortCode: string) {
-  const escapedScheme = escapeHtml(scheme);
-  const escapedFallback = escapeHtml(webFallback);
+function renderDeepLinkPage(
+  deepLink: {
+    platform: "ios" | "android";
+    scheme?: string;
+    storeUrl?: string;
+    webFallback: string;
+    fallbackDelayMs: number;
+  },
+  shortCode: string
+) {
+  const platformLabel = deepLink.platform === "ios" ? "iOS" : "Android";
+  const storeLabel = deepLink.platform === "ios" ? "App Store" : "Play Store";
+  const fallbackTarget = deepLink.storeUrl || deepLink.webFallback;
+  const escapedWebFallback = escapeHtml(deepLink.webFallback);
+  const escapedStoreUrl = deepLink.storeUrl ? escapeHtml(deepLink.storeUrl) : "";
+  const escapedScheme = deepLink.scheme ? escapeHtml(deepLink.scheme) : "";
+  const escapedCode = escapeHtml(shortCode);
+  const delayMs = Math.min(Math.max(deepLink.fallbackDelayMs || 2200, 800), 8000);
+
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Opening App - Slugly</title>
-<style>body{font-family:'Hanken Grotesk',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#F4F4FB;color:#14152B}
-.container{text-align:center;padding:2rem;max-width:400px}.spinner{width:32px;height:32px;border:3px solid #e5e7eb;border-top-color:#5A3FF0;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 1rem}
-@keyframes spin{to{transform:rotate(360deg)}}h1{font-size:1.25rem;margin-bottom:0.5rem;font-weight:600}p{color:#6b7280;line-height:1.6;font-size:0.9rem}
-a{color:#5A3FF0;text-decoration:none;font-weight:500}a:hover{text-decoration:underline}</style>
-</head><body><div class="container"><div class="spinner"></div><h1>Opening app...</h1>
-<p>If the app doesn't open, <a href="${escapedFallback}">continue in browser</a></p>
-</div>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Open in app - Slugly</title>
+<style>
+body{font-family:'Hanken Grotesk',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#F4F4FB;color:#14152B}
+.container{text-align:center;padding:28px;max-width:430px;width:100%}.app{width:56px;height:56px;border-radius:16px;background:#5A3FF0;color:#fff;display:grid;place-items:center;margin:0 auto 18px;font-size:26px}
+h1{font-size:1.35rem;margin:0 0 8px;font-weight:650}p{color:#6b7280;line-height:1.55;font-size:.92rem;margin:0 0 18px}
+.actions{display:grid;gap:10px}.btn{display:block;border-radius:10px;padding:11px 14px;text-decoration:none;font-weight:600;font-size:.92rem}
+.primary{background:#5A3FF0;color:#fff}.secondary{background:#fff;color:#2d2d42;border:1px solid #dedee8}
+.small{font-size:.78rem;color:#888;margin-top:16px}
+</style></head><body><main class="container">
+<div class="app">↗</div><h1>Opening the app…</h1>
+<p>Slugly is trying to open this link in the ${platformLabel} app. If it is not installed, the configured ${storeLabel} or web fallback will open.</p>
+<div class="actions">
+${deepLink.scheme ? `<a class="btn primary" id="open-app" href="${escapedScheme}">Open app</a>` : ""}
+${deepLink.storeUrl ? `<a class="btn secondary" href="${escapedStoreUrl}">Get the app</a>` : ""}
+<a class="btn secondary" href="${escapedWebFallback}">Continue on web</a>
+</div><p class="small">Short link: ${escapedCode}</p></main>
 <script>
 (function(){
-  var scheme = ${JSON.stringify(scheme)};
-  var fallback = ${JSON.stringify(webFallback)};
-  var timeout = setTimeout(function(){ window.location.href = fallback; }, 2500);
-  window.addEventListener('blur', function(){ clearTimeout(timeout); });
-  window.location.href = scheme;
+  var scheme = ${JSON.stringify(deepLink.scheme || "")};
+  var fallback = ${JSON.stringify(fallbackTarget)};
+  var delay = ${delayMs};
+  var leftPage = false;
+  var timer = null;
+  function cancelFallback(){ leftPage = true; if (timer) clearTimeout(timer); }
+  document.addEventListener('visibilitychange', function(){ if (document.hidden) cancelFallback(); });
+  window.addEventListener('pagehide', cancelFallback);
+  window.addEventListener('blur', cancelFallback);
+  if (scheme) {
+    timer = setTimeout(function(){ if (!leftPage) window.location.replace(fallback); }, delay);
+    setTimeout(function(){ if (!leftPage) window.location.href = scheme; }, 80);
+  } else {
+    timer = setTimeout(function(){ if (!leftPage) window.location.replace(fallback); }, 250);
+  }
 })();
-</script>
-</body></html>`;
+</script></body></html>`;
 }
 
 // ============ PIXEL INTERSTITIAL ============
