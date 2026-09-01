@@ -4,7 +4,8 @@ import net from "node:net";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { domains, links, linkRules, projects } from "../drizzle/schema";
 import { createContext } from "./_core/context";
-import { getDb, getLinkByShortCode, getLinkById, getProductQrByDomainAndGtin } from "./db";
+import { clearPagesDomain, getDb, getLinkByShortCode, getLinkById, getProductQrByDomainAndGtin, getPublishedPageByDomainId } from "./db";
+import { getPublicPageModel, recordPublicPageView, renderPublicPageHtml } from "./pagesPublic";
 import { checkLimit, countWorkspaceDomains, getPlanConfig } from "./workspace";
 
 const RENDER_API_BASE = "https://api.render.com/v1";
@@ -392,6 +393,7 @@ customDomainsApiRouter.delete("/:id", async (req, res) => {
 
     await deleteRenderDomain(domain.hostname);
     await database.update(links).set({ domainId: null }).where(eq(links.domainId, domain.id));
+    await clearPagesDomain(domain.id);
     await database.delete(domains).where(eq(domains.id, domain.id));
     return res.status(204).end();
   } catch (error) {
@@ -571,6 +573,16 @@ export async function customDomainRoutingMiddleware(req: Request, res: Response,
     }
 
     if (rawPath === "/") {
+      const page = await getPublishedPageByDomainId(domain.id);
+      if (page) {
+        void recordPublicPageView(req, page).catch(error => console.error("[Pages] branded view record failed:", error));
+        const model = await getPublicPageModel(page, true);
+        return res
+          .status(200)
+          .set("Cache-Control", "public, max-age=30")
+          .type("html")
+          .send(renderPublicPageHtml(model));
+      }
       return res.status(200).type("html").send(
         "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Short links powered by Slugly</title></head><body style=\"font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#f6f6fb;color:#17172b\"><main style=\"text-align:center;padding:32px\"><h1 style=\"font-size:22px\">Branded short domain is active</h1><p style=\"color:#666\">Short links on this domain are powered by Slugly.</p></main></body></html>"
       );

@@ -32,6 +32,9 @@ import {
   notificationRecipients,
   deepLinkEvents,
   productQrs,
+  pages,
+  pageButtons,
+  pageViews,
 } from "../drizzle/schema";
 import type {
   InsertProject,
@@ -43,6 +46,9 @@ import type {
   InsertNotificationRecipient,
   InsertDeepLinkEvent,
   InsertProductQr,
+  InsertPage,
+  InsertPageButton,
+  InsertPageView,
 } from "../drizzle/schema";
 import { ENV, isProtectedAdminEmail } from "./_core/env";
 import { getDatabaseUrl } from "./_core/databaseUrl";
@@ -651,6 +657,171 @@ export async function deleteProductQr(id: number) {
   if (!db) return;
   await db.delete(productQrs).where(eq(productQrs.id, id));
 }
+
+// ============ PAGES PRODUCT HELPERS ============
+
+export async function createPage(data: InsertPage) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(pages).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getPagesByWorkspace(workspaceId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(pages).where(eq(pages.workspaceId, workspaceId)).orderBy(desc(pages.updatedAt));
+}
+
+export async function getPageById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(pages).where(eq(pages.id, id)).limit(1);
+  return row;
+}
+
+export async function getPageBySlug(slug: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(pages).where(eq(pages.slug, slug)).limit(1);
+  return row;
+}
+
+export async function getPublishedPageBySlug(slug: string, type: "bio" | "landing") {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db
+    .select()
+    .from(pages)
+    .where(and(eq(pages.slug, slug), eq(pages.type, type), eq(pages.status, "published")))
+    .limit(1);
+  return row;
+}
+
+export async function getPublishedPageByDomainId(domainId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db
+    .select()
+    .from(pages)
+    .where(and(eq(pages.domainId, domainId), eq(pages.status, "published")))
+    .limit(1);
+  return row;
+}
+
+export async function getAnyPageByDomainId(domainId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(pages).where(eq(pages.domainId, domainId)).limit(1);
+  return row;
+}
+
+export async function updatePage(id: number, data: Partial<InsertPage>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(pages).set(data).where(eq(pages.id, id));
+}
+
+export async function deletePage(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(pageButtons).where(eq(pageButtons.pageId, id));
+  await db.delete(pageViews).where(eq(pageViews.pageId, id));
+  await db.delete(pages).where(eq(pages.id, id));
+}
+
+export async function clearPagesDomain(domainId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(pages).set({ domainId: null }).where(eq(pages.domainId, domainId));
+}
+
+export async function createPageButton(data: InsertPageButton) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(pageButtons).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getPageButtons(pageId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(pageButtons).where(eq(pageButtons.pageId, pageId)).orderBy(asc(pageButtons.position), asc(pageButtons.id));
+}
+
+export async function getPageButtonById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(pageButtons).where(eq(pageButtons.id, id)).limit(1);
+  return row;
+}
+
+export async function updatePageButton(id: number, data: Partial<InsertPageButton>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(pageButtons).set(data).where(eq(pageButtons.id, id));
+}
+
+export async function deletePageButton(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(pageButtons).where(eq(pageButtons.id, id));
+}
+
+export async function recordPageView(data: InsertPageView) {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(pageViews).values(data);
+}
+
+export async function getPageViewStats(pageId: number, days: number = 30) {
+  const db = await getDb();
+  if (!db) return { views: 0, uniqueViews: 0, countries: [], devices: [] };
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const filter = and(eq(pageViews.pageId, pageId), gte(pageViews.timestamp, since), eq(pageViews.isBot, false));
+  const [viewsResult, uniqueResult, countries, devices] = await Promise.all([
+    db.select({ count: sql<number>`COUNT(*)` }).from(pageViews).where(filter),
+    db.select({ count: sql<number>`COUNT(DISTINCT ${pageViews.ipHash})` }).from(pageViews).where(filter),
+    db.select({ value: pageViews.country, count: sql<number>`COUNT(*)` }).from(pageViews).where(and(filter, sql`${pageViews.country} IS NOT NULL`)).groupBy(pageViews.country).orderBy(desc(sql`COUNT(*)`)).limit(10),
+    db.select({ value: pageViews.deviceType, count: sql<number>`COUNT(*)` }).from(pageViews).where(and(filter, sql`${pageViews.deviceType} IS NOT NULL`)).groupBy(pageViews.deviceType).orderBy(desc(sql`COUNT(*)`)).limit(10),
+  ]);
+  return {
+    views: Number(viewsResult[0]?.count || 0),
+    uniqueViews: Number(uniqueResult[0]?.count || 0),
+    countries,
+    devices,
+  };
+}
+
+export async function getPageButtonClickStats(pageId: number, days: number = 30) {
+  const db = await getDb();
+  if (!db) return [] as Array<{ linkId: number; total: number; unique: number }>;
+  const buttons = await getPageButtons(pageId);
+  const linkIds = buttons.map(button => button.linkId);
+  if (linkIds.length === 0) return [];
+
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = await db
+    .select({
+      linkId: clicks.linkId,
+      total: sql<number>`COUNT(*)`,
+      unique: sql<number>`COUNT(DISTINCT ${clicks.ipHash})`,
+    })
+    .from(clicks)
+    .where(and(
+      inArray(clicks.linkId, linkIds),
+      gte(clicks.timestamp, since),
+      eq(clicks.isBot, false)
+    ))
+    .groupBy(clicks.linkId);
+
+  return rows.map(row => ({
+    linkId: row.linkId,
+    total: Number(row.total || 0),
+    unique: Number(row.unique || 0),
+  }));
+}
+
 
 // ============ SITE SETTINGS ============
 

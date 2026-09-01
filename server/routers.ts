@@ -1003,6 +1003,329 @@ export const appRouter = router({
       }),
   }),
 
+  // ============ PAGES: LINK-IN-BIO + LANDING PAGES ============
+
+  pages: router({
+    list: workspaceProcedure.query(async ({ ctx }) => {
+      const rows = await db.getPagesByWorkspace(ctx.workspace.id);
+      return Promise.all(rows.map(async page => {
+        const buttons = await db.getPageButtons(page.id);
+        const domain = page.domainId ? await db.getDomainById(page.domainId) : null;
+        const publicUrl = domain?.verified
+          ? `https://${domain.hostname}/`
+          : `https://slugly.io/${page.type === "bio" ? "bio" : "page"}/${page.slug}`;
+        return { ...page, buttonCount: buttons.length, domainHostname: domain?.verified ? domain.hostname : null, publicUrl };
+      }));
+    }),
+
+    get: workspaceProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ ctx, input }) => {
+        const page = await db.getPageById(input.id);
+        if (!page || page.workspaceId !== ctx.workspace.id) throw new Error("Page not found");
+        const [buttons, domain] = await Promise.all([
+          db.getPageButtons(page.id),
+          page.domainId ? db.getDomainById(page.domainId) : Promise.resolve(null),
+        ]);
+        const enrichedButtons = await Promise.all(buttons.map(async button => {
+          const link = await db.getLinkById(button.linkId);
+          const shortUrl = domain?.verified
+            ? `https://${domain.hostname}/${link?.shortCode || ""}`
+            : `https://slugly.io/r/${link?.shortCode || ""}`;
+          return {
+            ...button,
+            destinationUrl: link?.destinationUrl || "",
+            shortCode: link?.shortCode || "",
+            shortUrl,
+          };
+        }));
+        return {
+          ...page,
+          buttons: enrichedButtons,
+          domainHostname: domain?.verified ? domain.hostname : null,
+          publicUrl: domain?.verified
+            ? `https://${domain.hostname}/`
+            : `https://slugly.io/${page.type === "bio" ? "bio" : "page"}/${page.slug}`,
+        };
+      }),
+
+    create: editorProcedure
+      .input(z.object({
+        type: z.enum(["bio", "landing"]),
+        slug: z.string().min(3).max(64).regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/),
+        title: z.string().min(1).max(255),
+        domainId: z.number().nullable().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const slug = input.slug.trim().toLowerCase();
+        const existingSlug = await db.getPageBySlug(slug);
+        if (existingSlug) throw new Error("This page slug is already taken.");
+
+        let domainId: number | null = input.domainId ?? null;
+        if (domainId) {
+          const domain = await db.getDomainById(domainId);
+          if (!domain || !domain.verified || domain.workspaceId !== ctx.workspace.id) {
+            throw new Error("Choose a verified custom domain from this workspace.");
+          }
+          const existingDomainPage = await db.getAnyPageByDomainId(domainId);
+          if (existingDomainPage) throw new Error("This custom domain is already assigned to another Page.");
+        }
+
+        const created = await db.createPage({
+          workspaceId: ctx.workspace.id,
+          userId: ctx.user.id,
+          type: input.type,
+          slug,
+          title: input.title.trim(),
+          headline: input.type === "landing" ? input.title.trim() : null,
+          description: null,
+          avatarUrl: null,
+          heroImageUrl: null,
+          accentColor: "#5A3FF0",
+          backgroundColor: "#F7F7FC",
+          textColor: "#14152B",
+          buttonStyle: input.type === "bio" ? "pill" : "rounded",
+          domainId,
+          status: "draft",
+        });
+        return { id: created.id };
+      }),
+
+    update: editorProcedure
+      .input(z.object({
+        id: z.number(),
+        slug: z.string().min(3).max(64).regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/).optional(),
+        title: z.string().min(1).max(255).optional(),
+        headline: z.string().max(255).nullable().optional(),
+        description: z.string().max(4000).nullable().optional(),
+        avatarUrl: z.string().url().nullable().optional(),
+        heroImageUrl: z.string().url().nullable().optional(),
+        accentColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+        backgroundColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+        textColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+        buttonStyle: z.enum(["rounded", "pill", "square"]).optional(),
+        domainId: z.number().nullable().optional(),
+        status: z.enum(["draft", "published"]).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const page = await db.getPageById(input.id);
+        if (!page || page.workspaceId !== ctx.workspace.id) throw new Error("Page not found");
+
+        if (input.slug && input.slug.toLowerCase() !== page.slug) {
+          const existingSlug = await db.getPageBySlug(input.slug.toLowerCase());
+          if (existingSlug) throw new Error("This page slug is already taken.");
+        }
+
+        let nextDomainId = page.domainId;
+        if (input.domainId !== undefined) {
+          nextDomainId = input.domainId;
+          if (nextDomainId) {
+            const domain = await db.getDomainById(nextDomainId);
+            if (!domain || !domain.verified || domain.workspaceId !== ctx.workspace.id) {
+              throw new Error("Choose a verified custom domain from this workspace.");
+            }
+            const existingDomainPage = await db.getAnyPageByDomainId(nextDomainId);
+            if (existingDomainPage && existingDomainPage.id !== page.id) {
+              throw new Error("This custom domain is already assigned to another Page.");
+            }
+          }
+        }
+
+        const { id, ...raw } = input;
+        const updateData: any = { ...raw };
+        if (input.slug) updateData.slug = input.slug.toLowerCase();
+        await db.updatePage(id, updateData);
+
+        if (nextDomainId !== page.domainId) {
+          const buttons = await db.getPageButtons(page.id);
+          for (const button of buttons) {
+            const link = await db.getLinkById(button.linkId);
+            if (!link) continue;
+            await db.updateLink(link.id, { domainId: nextDomainId });
+            const { invalidateLinkCache } = await import("./redirect");
+            invalidateLinkCache(link.shortCode);
+          }
+        }
+
+        return { success: true };
+      }),
+
+    delete: editorProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const page = await db.getPageById(input.id);
+        if (!page || page.workspaceId !== ctx.workspace.id) throw new Error("Page not found");
+        const buttons = await db.getPageButtons(page.id);
+        for (const button of buttons) {
+          const link = await db.getLinkById(button.linkId);
+          if (link) {
+            await db.updateLink(link.id, { status: "paused" });
+            const { invalidateLinkCache } = await import("./redirect");
+            invalidateLinkCache(link.shortCode);
+          }
+        }
+        await db.deletePage(page.id);
+        return { success: true };
+      }),
+
+    addButton: editorProcedure
+      .input(z.object({
+        pageId: z.number(),
+        label: z.string().min(1).max(255),
+        subtitle: z.string().max(500).optional(),
+        destinationUrl: z.string().url(),
+        style: z.enum(["primary", "secondary", "outline"]).default("primary"),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const page = await db.getPageById(input.pageId);
+        if (!page || page.workspaceId !== ctx.workspace.id) throw new Error("Page not found");
+
+        const config = await ws.getPlanConfig(ctx.workspace.plan as any);
+        const linkCount = await ws.countWorkspaceLinks(ctx.workspace.id);
+        const limitCheck = ws.checkLimit(config, "links", linkCount);
+        if (!limitCheck.allowed) {
+          throw new Error("Your workspace link limit has been reached. Every Page button uses a Slugly link for routing and analytics.");
+        }
+
+        const normalizedDestination = normalizeHttpUrl(input.destinationUrl, "Destination URL");
+        const { checkUrlSafety } = await import("./safeBrowsing");
+        const safety = await checkUrlSafety(normalizedDestination);
+        if (!safety.safe) throw new Error(`URL rejected: ${safety.reason || "flagged as unsafe"}`);
+
+        let shortCode = nanoid(8);
+        for (let attempts = 0; attempts < 10; attempts++) {
+          const [existing, retired] = await Promise.all([
+            db.getLinkByShortCode(shortCode),
+            db.isShortCodeRetired(shortCode),
+          ]);
+          if (!existing && !retired) break;
+          shortCode = nanoid(8);
+        }
+
+        const projectId = await db.ensureSystemProject(ctx.workspace.id, ctx.user.id);
+        const link = await db.createLink({
+          userId: ctx.user.id,
+          projectId,
+          destinationUrl: normalizedDestination,
+          shortCode,
+          title: `${page.title} · ${input.label}`,
+          tags: ["page", page.type],
+          utmSource: null,
+          utmMedium: null,
+          utmCampaign: null,
+          utmTerm: null,
+          utmContent: null,
+          domainId: page.domainId,
+          status: "active",
+        });
+
+        const buttons = await db.getPageButtons(page.id);
+        const button = await db.createPageButton({
+          pageId: page.id,
+          linkId: link.id,
+          label: input.label.trim(),
+          subtitle: input.subtitle?.trim() || null,
+          style: input.style,
+          position: buttons.length,
+          enabled: true,
+        });
+
+        return { id: button.id, linkId: link.id };
+      }),
+
+    updateButton: editorProcedure
+      .input(z.object({
+        id: z.number(),
+        pageId: z.number(),
+        label: z.string().min(1).max(255).optional(),
+        subtitle: z.string().max(500).nullable().optional(),
+        destinationUrl: z.string().url().optional(),
+        style: z.enum(["primary", "secondary", "outline"]).optional(),
+        position: z.number().min(0).optional(),
+        enabled: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const page = await db.getPageById(input.pageId);
+        const button = await db.getPageButtonById(input.id);
+        if (!page || page.workspaceId !== ctx.workspace.id || !button || button.pageId !== page.id) {
+          throw new Error("Page button not found");
+        }
+
+        if (input.destinationUrl) {
+          const normalizedDestination = normalizeHttpUrl(input.destinationUrl, "Destination URL");
+          const { checkUrlSafety } = await import("./safeBrowsing");
+          const safety = await checkUrlSafety(normalizedDestination);
+          if (!safety.safe) throw new Error(`URL rejected: ${safety.reason || "flagged as unsafe"}`);
+          const link = await db.getLinkById(button.linkId);
+          if (link) {
+            await db.updateLink(link.id, { destinationUrl: normalizedDestination });
+            const { invalidateLinkCache } = await import("./redirect");
+            invalidateLinkCache(link.shortCode);
+          }
+        }
+
+        await db.updatePageButton(button.id, {
+          label: input.label ?? button.label,
+          subtitle: input.subtitle === undefined ? button.subtitle : (input.subtitle?.trim() || null),
+          style: input.style ?? button.style,
+          position: input.position ?? button.position,
+          enabled: input.enabled ?? button.enabled,
+        });
+        return { success: true };
+      }),
+
+    deleteButton: editorProcedure
+      .input(z.object({ id: z.number(), pageId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const page = await db.getPageById(input.pageId);
+        const button = await db.getPageButtonById(input.id);
+        if (!page || page.workspaceId !== ctx.workspace.id || !button || button.pageId !== page.id) {
+          throw new Error("Page button not found");
+        }
+        const link = await db.getLinkById(button.linkId);
+        if (link) {
+          await db.updateLink(link.id, { status: "paused" });
+          const { invalidateLinkCache } = await import("./redirect");
+          invalidateLinkCache(link.shortCode);
+        }
+        await db.deletePageButton(button.id);
+        return { success: true };
+      }),
+
+    analytics: workspaceProcedure
+      .input(z.object({ id: z.number(), days: z.number().min(1).max(365).default(30) }))
+      .query(async ({ ctx, input }) => {
+        const page = await db.getPageById(input.id);
+        if (!page || page.workspaceId !== ctx.workspace.id) throw new Error("Page not found");
+        const [viewStats, clickStats, buttons] = await Promise.all([
+          db.getPageViewStats(page.id, input.days),
+          db.getPageButtonClickStats(page.id, input.days),
+          db.getPageButtons(page.id),
+        ]);
+        const clickMap = new Map(clickStats.map(row => [row.linkId, row]));
+        const buttonStats = await Promise.all(buttons.map(async button => {
+          const link = await db.getLinkById(button.linkId);
+          const clicks = clickMap.get(button.linkId);
+          return {
+            id: button.id,
+            linkId: button.linkId,
+            label: button.label,
+            totalClicks: clicks?.total || 0,
+            uniqueClicks: clicks?.unique || 0,
+            destinationUrl: link?.destinationUrl || "",
+            shortCode: link?.shortCode || "",
+          };
+        }));
+        const totalClicks = buttonStats.reduce((sum, button) => sum + button.totalClicks, 0);
+        return {
+          ...viewStats,
+          totalClicks,
+          ctr: viewStats.views > 0 ? Math.round((totalClicks / viewStats.views) * 10000) / 100 : 0,
+          buttons: buttonStats,
+        };
+      }),
+  }),
+
   // ============ TAGS ============
   tag: router({
     list: protectedProcedure.query(async ({ ctx }) => {
