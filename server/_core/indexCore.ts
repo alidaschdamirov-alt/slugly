@@ -21,6 +21,7 @@ import { projectLinksPageRouter } from "../projectLinksPageApi";
 import { backgroundJobTelemetryMiddleware, systemHealthMetricsMiddleware } from "../systemHealth";
 import { impersonationRouter } from "../impersonationApi";
 import { resolveImpersonation } from "../impersonation";
+import { deepLinksApiRouter } from "../deepLinksApi";
 import { isPrivilegedRole } from "../adminAccess";
 import { isPrivilegedIpAllowed } from "../privilegedIp";
 import { backupHandler } from "../backup";
@@ -124,6 +125,7 @@ async function startServer() {
   registerStorageRoutes(app);
 
   app.use("/api/impersonation", impersonationRouter);
+  app.use("/api/deeplinks", deepLinksApiRouter);
   app.use("/api/custom-domains", customDomainsApiRouter);
 
   app.use(
