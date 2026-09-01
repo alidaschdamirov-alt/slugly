@@ -225,15 +225,34 @@ redirectRouter.get("/:shortCode([a-zA-Z0-9_-]{3,32})", async (req: Request, res:
       // If URL parsing fails (e.g. deep link scheme), use as-is
     }
 
-    // Deep link handling: serve interstitial that attempts app scheme
+    const recordCurrentClick = () =>
+      recordClick({
+        linkId: link.id,
+        timestamp: now,
+        country,
+        city: null,
+        deviceType,
+        browser,
+        os,
+        referrer: referrer || null,
+        isBot: isBotHit,
+        ipHash,
+        variant: evalResult.variant || null,
+      }).catch(err => console.error("[Click] Failed to record:", err));
+
+    // Deep link handling: serve interstitial that attempts app scheme.
+    // Record the visit before returning the interstitial so routing analytics stay complete.
     if (evalResult.isDeepLink && evalResult.deepLinkScheme) {
+      recordCurrentClick();
       return res.status(200).send(renderDeepLinkPage(evalResult.deepLinkScheme, destinationUrl, shortCode));
     }
 
-    // Pixel interstitial: fire tracking pixels before redirecting
+    // Pixel interstitial: fire tracking pixels before redirecting.
+    // Record the visit before returning the interstitial so routing analytics stay complete.
     if (evalResult.pixelIds && evalResult.pixelIds.length > 0 && !isBotHit) {
       const pixels = await getPixelsByIds(evalResult.pixelIds);
       if (pixels.length > 0) {
+        recordCurrentClick();
         return res.status(200).send(renderPixelInterstitial(pixels, destinationUrl, evalResult.pixelDelay || 1500));
       }
     }
@@ -245,19 +264,7 @@ redirectRouter.get("/:shortCode([a-zA-Z0-9_-]{3,32})", async (req: Request, res:
     }
 
     // Fire and forget click recording - don't block the redirect
-    recordClick({
-      linkId: link.id,
-      timestamp: now,
-      country,
-      city: null,
-      deviceType,
-      browser,
-      os,
-      referrer: referrer || null,
-      isBot: isBotHit,
-      ipHash,
-      variant: evalResult.variant || null,
-    }).catch(err => console.error("[Click] Failed to record:", err));
+    recordCurrentClick();
 
     // HTTP 302 Temporary Redirect — NEVER use 301 (browsers cache it, clicks stop counting)
     return res.redirect(302, destinationUrl);
