@@ -170,6 +170,24 @@ export const linkRules = mysqlTable("link_rules", {
 export type LinkRule = typeof linkRules.$inferSelect;
 export type InsertLinkRule = typeof linkRules.$inferInsert;
 
+// ============ DEEP LINK EVENTS ============
+
+export const deepLinkEvents = mysqlTable("deep_link_events", {
+  id: int("id").autoincrement().primaryKey(),
+  linkId: int("linkId").notNull(),
+  sessionId: varchar("sessionId", { length: 64 }).notNull(),
+  eventType: mysqlEnum("eventType", ["attempt", "app_open", "store_fallback", "web_fallback"]).notNull(),
+  platform: mysqlEnum("platform", ["ios", "android", "other"]).default("other").notNull(),
+  source: varchar("source", { length: 32 }).default("web").notNull(),
+  timestamp: bigint("timestamp", { mode: "number" }).notNull(),
+}, (table) => ({
+  linkTimestampIdx: index("deep_link_events_link_ts_idx").on(table.linkId, table.timestamp),
+  sessionIdx: index("deep_link_events_session_idx").on(table.sessionId),
+}));
+
+export type DeepLinkEvent = typeof deepLinkEvents.$inferSelect;
+export type InsertDeepLinkEvent = typeof deepLinkEvents.$inferInsert;
+
 // ============ UTM TEMPLATES ============
 
 export const utmTemplates = mysqlTable("utm_templates", {
