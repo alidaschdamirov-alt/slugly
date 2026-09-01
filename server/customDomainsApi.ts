@@ -4,7 +4,7 @@ import net from "node:net";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { domains, links, linkRules, projects } from "../drizzle/schema";
 import { createContext } from "./_core/context";
-import { getDb, getLinkByShortCode } from "./db";
+import { getDb, getLinkByShortCode, getLinkById, getProductQrByDomainAndGtin } from "./db";
 import { checkLimit, countWorkspaceDomains, getPlanConfig } from "./workspace";
 
 const RENDER_API_BASE = "https://api.render.com/v1";
@@ -557,6 +557,17 @@ export async function customDomainRoutingMiddleware(req: Request, res: Response,
         .set("Content-Type", "application/json")
         .set("Cache-Control", "public, max-age=300")
         .json(files.android);
+    }
+
+    const gs1Match = rawPath.match(/^\/01\/(\d{14})(?:\/10\/[^/]+)?(?:\/21\/[^/]+)?\/?$/);
+    if (gs1Match) {
+      const product = await getProductQrByDomainAndGtin(domain.id, gs1Match[1]);
+      if (!product) return res.status(404).send("Product QR not found");
+      const link = await getLinkById(product.linkId);
+      if (!link || link.domainId !== domain.id) return res.status(404).send("Product QR link not found");
+      const queryIndex = req.url.indexOf("?");
+      const query = queryIndex >= 0 ? req.url.slice(queryIndex) : "";
+      return res.redirect(302, `/r/${link.shortCode}${query}`);
     }
 
     if (rawPath === "/") {
