@@ -14,6 +14,78 @@ import * as db from "./db";
 import { isReservedSlug } from "./redirect";
 import * as ws from "./workspace";
 
+function normalizeHttpUrl(value: unknown, label: string) {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${label} is required.`);
+  let parsed: URL;
+  try { parsed = new URL(value.trim()); } catch { throw new Error(`${label} must be a valid URL.`); }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error(`${label} must use http or https.`);
+  return parsed.toString();
+}
+
+function normalizeAppScheme(value: unknown, label: string) {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const trimmed = value.trim();
+  let parsed: URL;
+  try { parsed = new URL(trimmed); } catch { throw new Error(`${label} must be a valid app URL such as myapp://product/123.`); }
+  if (["javascript:", "data:", "file:"].includes(parsed.protocol)) throw new Error(`${label} uses a blocked URL scheme.`);
+  return parsed.toString();
+}
+
+function normalizeSha256Fingerprint(value: unknown) {
+  const raw = String(value || "").trim().replace(/[^0-9a-fA-F]/g, "").toUpperCase();
+  if (raw.length !== 64) throw new Error("Android SHA-256 fingerprint must contain exactly 64 hexadecimal characters.");
+  return raw.match(/.{2}/g)!.join(":");
+}
+
+function normalizeDeepLinkConfig(raw: Record<string, any>) {
+  const webFallback = normalizeHttpUrl(raw?.webFallback, "Web fallback URL");
+  const iosRaw = raw?.ios && typeof raw.ios === "object" ? raw.ios : null;
+  const androidRaw = raw?.android && typeof raw.android === "object" ? raw.android : null;
+
+  const ios = iosRaw ? {
+    scheme: normalizeAppScheme(iosRaw.scheme, "iOS app scheme"),
+    appStoreUrl: iosRaw.appStoreUrl ? normalizeHttpUrl(iosRaw.appStoreUrl, "App Store URL") : undefined,
+    teamId: String(iosRaw.teamId || "").trim().toUpperCase() || undefined,
+    bundleId: String(iosRaw.bundleId || "").trim() || undefined,
+  } : undefined;
+  if (ios && Boolean(ios.teamId) !== Boolean(ios.bundleId)) throw new Error("Apple Team ID and Bundle ID must be provided together.");
+  if (ios?.teamId && !/^[A-Z0-9]{10}$/.test(ios.teamId)) throw new Error("Apple Team ID must be 10 letters/numbers.");
+  if (ios?.bundleId && !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(ios.bundleId)) throw new Error("Bundle ID must look like com.company.app.");
+
+  const fingerprints = Array.isArray(androidRaw?.sha256CertFingerprints)
+    ? androidRaw.sha256CertFingerprints.map(normalizeSha256Fingerprint)
+    : [];
+  const android = androidRaw ? {
+    scheme: normalizeAppScheme(androidRaw.scheme, "Android app scheme"),
+    playStoreUrl: androidRaw.playStoreUrl ? normalizeHttpUrl(androidRaw.playStoreUrl, "Play Store URL") : undefined,
+    packageName: String(androidRaw.packageName || "").trim() || undefined,
+    sha256CertFingerprints: fingerprints.length ? Array.from(new Set(fingerprints)) : undefined,
+  } : undefined;
+  if (android && Boolean(android.packageName) !== Boolean(android.sha256CertFingerprints?.length)) throw new Error("Android package name and SHA-256 fingerprint must be provided together.");
+  if (android?.packageName && !/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/.test(android.packageName)) throw new Error("Android package name must look like com.company.app.");
+
+  if (!ios?.scheme && !ios?.teamId && !android?.scheme && !android?.packageName) {
+    throw new Error("Configure at least an iOS or Android app scheme/native app association.");
+  }
+
+  return {
+    ios,
+    android,
+    webFallback,
+    fallbackDelayMs: Math.min(Math.max(Number(raw?.fallbackDelayMs || 2200), 800), 8000),
+  };
+}
+
+async function assertLinkInWorkspace(linkId: number, workspaceId: number, userId: number) {
+  const link = await db.getLinkById(linkId);
+  if (!link) throw new Error("Link not found");
+  if (link.projectId) {
+    const project = await db.getProjectById(link.projectId);
+    if (project?.workspaceId === workspaceId) return link;
+  }
+  if (link.userId === userId) return link;
+  throw new Error("Link not found");
+}
 export const appRouter = router({
   system: systemRouter,
   auth: router({
@@ -1424,7 +1496,8 @@ export const appRouter = router({
   linkRules: router({
     list: editorProcedure
       .input(z.object({ linkId: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ ctx, input }) => {
+        await assertLinkInWorkspace(input.linkId, ctx.workspace.id, ctx.user.id);
         const rules = await import("./rules");
         return rules.getAllRulesForLink(input.linkId);
       }),
@@ -1438,8 +1511,8 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ ctx, input }) => {
+        await assertLinkInWorkspace(input.linkId, ctx.workspace.id, ctx.user.id);
         const config = await ws.getPlanConfig(ctx.workspace.plan as any);
-        // All redirect rules require Pro+
         const featureMap: Record<string, keyof typeof config.features> = {
           geo: "geoTarget",
           device: "geoTarget",
@@ -1455,7 +1528,7 @@ export const appRouter = router({
         return rules.createRule({
           linkId: input.linkId,
           type: input.type,
-          config: input.config,
+          config: input.type === "deeplink" ? normalizeDeepLinkConfig(input.config) : input.config,
           priority: input.priority,
         });
       }),
@@ -1469,28 +1542,29 @@ export const appRouter = router({
           enabled: z.boolean().optional(),
         })
       )
-      .mutation(async ({ input }) => {
-        const { id, linkId, ...data } = input;
+      .mutation(async ({ ctx, input }) => {
+        const link = await assertLinkInWorkspace(input.linkId, ctx.workspace.id, ctx.user.id);
         const rules = await import("./rules");
+        const existingRules = await rules.getAllRulesForLink(input.linkId);
+        const existing = existingRules.find(rule => rule.id === input.id);
+        if (!existing) throw new Error("Rule not found");
+        const { id, linkId, ...data } = input;
+        if (data.config && existing.type === "deeplink") data.config = normalizeDeepLinkConfig(data.config);
         await rules.updateRule(id, linkId, data);
-        // Invalidate cache for this link
-        const link = await db.getLinkById(linkId);
-        if (link) {
-          const { invalidateLinkCache } = await import("./redirect");
-          invalidateLinkCache(link.shortCode);
-        }
+        const { invalidateLinkCache } = await import("./redirect");
+        invalidateLinkCache(link.shortCode);
         return { success: true };
       }),
     delete: editorProcedure
       .input(z.object({ id: z.number(), linkId: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        const link = await assertLinkInWorkspace(input.linkId, ctx.workspace.id, ctx.user.id);
         const rules = await import("./rules");
+        const existingRules = await rules.getAllRulesForLink(input.linkId);
+        if (!existingRules.some(rule => rule.id === input.id)) throw new Error("Rule not found");
         await rules.deleteRule(input.id, input.linkId);
-        const link = await db.getLinkById(input.linkId);
-        if (link) {
-          const { invalidateLinkCache } = await import("./redirect");
-          invalidateLinkCache(link.shortCode);
-        }
+        const { invalidateLinkCache } = await import("./redirect");
+        invalidateLinkCache(link.shortCode);
         return { success: true };
       }),
   }),
