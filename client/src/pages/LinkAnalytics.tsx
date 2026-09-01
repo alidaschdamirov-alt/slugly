@@ -20,6 +20,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { QrCodeDialog } from "@/components/QrCodeDialog";
 import CsvExportButton from "@/components/CsvExportButton";
 import EditLinkDialog, { type EditLinkDialogPayload } from "@/components/EditLinkDialog";
+import RoutingAnalyticsCard from "@/components/RoutingAnalyticsCard";
 import { useQueryClient } from "@tanstack/react-query";
 
 export default function LinkAnalytics() {
@@ -282,6 +283,15 @@ export default function LinkAnalytics() {
               </div>
             )}
           </Card>
+
+          {data.routingRules && data.routingRules.some((rule: any) => rule.enabled) && (
+            <RoutingAnalyticsCard
+              rules={data.routingRules as any}
+              stats={data.routingStats as any}
+              days={days}
+              onManage={() => setLocation(`/link/${linkId}/rules`)}
+            />
+          )}
 
           <LinkPreview url={data.link.destinationUrl} />
 
