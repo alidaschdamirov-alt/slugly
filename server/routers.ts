@@ -13,6 +13,7 @@ import { nanoid } from "nanoid";
 import * as db from "./db";
 import { isReservedSlug } from "./redirect";
 import * as ws from "./workspace";
+import { buildGs1DigitalLinkUrl, normalizeGs1Qualifier, validateGtin } from "../shared/gs1";
 
 function normalizeHttpUrl(value: unknown, label: string) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} is required.`);
@@ -821,6 +822,179 @@ export const appRouter = router({
         } catch {
           return null;
         }
+      }),
+  }),
+
+  // ============ GS1 PRODUCT QR ============
+
+  productQr: router({
+    list: workspaceProcedure.query(async ({ ctx }) => {
+      const products = await db.getProductQrsByWorkspace(ctx.workspace.id);
+      const enriched = await Promise.all(products.map(async product => {
+        const link = await db.getLinkById(product.linkId);
+        const domain = product.domainId ? await db.getDomainById(product.domainId) : null;
+        const clickCount = link ? await db.getClickCountByLinkIdFiltered(link.id, true) : { total: 0, unique: 0 };
+        const origin = domain?.verified
+          ? `https://${domain.hostname}`
+          : `https://slugly.io/p/${product.id}`;
+        return {
+          ...product,
+          destinationUrl: link?.destinationUrl || "",
+          shortCode: link?.shortCode || "",
+          linkStatus: link?.status || "paused",
+          clickCount: clickCount.total,
+          uniqueClicks: clickCount.unique,
+          domainHostname: domain?.verified ? domain.hostname : null,
+          digitalLinkUrl: buildGs1DigitalLinkUrl(origin, product.gtin, {
+            batchLot: product.batchLot,
+            serialNumber: product.serialNumber,
+            expiryDate: product.expiryDate,
+          }),
+        };
+      }));
+      return enriched;
+    }),
+
+    create: editorProcedure
+      .input(z.object({
+        gtin: z.string().min(1).max(32),
+        productName: z.string().min(1).max(255),
+        brand: z.string().max(255).optional(),
+        destinationUrl: z.string().url(),
+        batchLot: z.string().max(20).optional(),
+        serialNumber: z.string().max(20).optional(),
+        expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        domainId: z.number().nullable().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const gtin = validateGtin(input.gtin);
+        if (!gtin.valid || !gtin.normalized14 || !gtin.original) {
+          throw new Error(gtin.error || "Invalid GTIN.");
+        }
+
+        const config = await ws.getPlanConfig(ctx.workspace.plan as any);
+        const linkCount = await ws.countWorkspaceLinks(ctx.workspace.id);
+        const limitCheck = ws.checkLimit(config, "links", linkCount);
+        if (!limitCheck.allowed) {
+          throw new Error("Your workspace link limit has been reached. Product QR codes use a Slugly link for routing and analytics.");
+        }
+
+        const { checkUrlSafety } = await import("./safeBrowsing");
+        const safety = await checkUrlSafety(input.destinationUrl);
+        if (!safety.safe) throw new Error(`URL rejected: ${safety.reason || "flagged as unsafe"}`);
+
+        let domainId: number | null = input.domainId ?? null;
+        if (domainId) {
+          const domain = await db.getDomainById(domainId);
+          if (!domain || !domain.verified || domain.workspaceId !== ctx.workspace.id) {
+            throw new Error("Choose a verified custom domain from this workspace.");
+          }
+        }
+
+        let shortCode = nanoid(8);
+        for (let attempts = 0; attempts < 10; attempts++) {
+          const existing = await db.getLinkByShortCode(shortCode);
+          const retired = await db.isShortCodeRetired(shortCode);
+          if (!existing && !retired) break;
+          shortCode = nanoid(8);
+        }
+
+        const projectId = await db.ensureSystemProject(ctx.workspace.id, ctx.user.id);
+        const linkResult = await db.createLink({
+          userId: ctx.user.id,
+          projectId,
+          destinationUrl: input.destinationUrl,
+          shortCode,
+          title: input.productName,
+          tags: ["gs1", "product-qr"],
+          utmSource: null,
+          utmMedium: null,
+          utmCampaign: null,
+          utmTerm: null,
+          utmContent: null,
+          domainId,
+          status: "active",
+        });
+
+        const product = await db.createProductQr({
+          workspaceId: ctx.workspace.id,
+          userId: ctx.user.id,
+          linkId: linkResult.id,
+          domainId,
+          gtin: gtin.normalized14,
+          sourceGtin: gtin.original,
+          productName: input.productName,
+          brand: input.brand?.trim() || null,
+          batchLot: normalizeGs1Qualifier(input.batchLot) || null,
+          serialNumber: normalizeGs1Qualifier(input.serialNumber) || null,
+          expiryDate: input.expiryDate || null,
+        });
+
+        const domain = domainId ? await db.getDomainById(domainId) : null;
+        const origin = domain?.verified
+          ? `https://${domain.hostname}`
+          : `https://slugly.io/p/${product.id}`;
+
+        return {
+          id: product.id,
+          linkId: linkResult.id,
+          gtin: gtin.normalized14,
+          digitalLinkUrl: buildGs1DigitalLinkUrl(origin, gtin.normalized14, {
+            batchLot: input.batchLot,
+            serialNumber: input.serialNumber,
+            expiryDate: input.expiryDate,
+          }),
+        };
+      }),
+
+    update: editorProcedure
+      .input(z.object({
+        id: z.number(),
+        productName: z.string().min(1).max(255).optional(),
+        brand: z.string().max(255).nullable().optional(),
+        destinationUrl: z.string().url().optional(),
+        batchLot: z.string().max(20).nullable().optional(),
+        serialNumber: z.string().max(20).nullable().optional(),
+        expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const product = await db.getProductQrById(input.id);
+        if (!product || product.workspaceId !== ctx.workspace.id) throw new Error("Product QR not found");
+        const link = await db.getLinkById(product.linkId);
+        if (!link) throw new Error("Underlying link not found");
+
+        if (input.destinationUrl) {
+          const { checkUrlSafety } = await import("./safeBrowsing");
+          const safety = await checkUrlSafety(input.destinationUrl);
+          if (!safety.safe) throw new Error(`URL rejected: ${safety.reason || "flagged as unsafe"}`);
+          await db.updateLink(link.id, { destinationUrl: input.destinationUrl });
+          const { invalidateLinkCache } = await import("./redirect");
+          invalidateLinkCache(link.shortCode);
+        }
+
+        await db.updateProductQr(product.id, {
+          productName: input.productName ?? product.productName,
+          brand: input.brand === undefined ? product.brand : (input.brand?.trim() || null),
+          batchLot: input.batchLot === undefined ? product.batchLot : (normalizeGs1Qualifier(input.batchLot) || null),
+          serialNumber: input.serialNumber === undefined ? product.serialNumber : (normalizeGs1Qualifier(input.serialNumber) || null),
+          expiryDate: input.expiryDate === undefined ? product.expiryDate : input.expiryDate,
+        });
+        return { success: true };
+      }),
+
+    delete: editorProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const product = await db.getProductQrById(input.id);
+        if (!product || product.workspaceId !== ctx.workspace.id) throw new Error("Product QR not found");
+        await db.deleteProductQr(product.id);
+        const link = await db.getLinkById(product.linkId);
+        if (link) {
+          await db.updateLink(link.id, { status: "paused" });
+          const { invalidateLinkCache } = await import("./redirect");
+          invalidateLinkCache(link.shortCode);
+        }
+        return { success: true };
       }),
   }),
 
