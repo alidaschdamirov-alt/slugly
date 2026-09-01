@@ -23,6 +23,7 @@ import {
   BarChart3,
   Check,
   Copy,
+  Code2,
   ExternalLink,
   Globe2,
   Loader2,
@@ -31,6 +32,7 @@ import {
   QrCode,
   Route,
   Save,
+  ShieldCheck,
   Smartphone,
   Trash2,
 } from "lucide-react";
@@ -68,6 +70,8 @@ export default function PageEditorPage() {
   const [backgroundColor, setBackgroundColor] = useState("#F7F7FC");
   const [textColor, setTextColor] = useState("#14152B");
   const [buttonStyle, setButtonStyle] = useState<"rounded" | "pill" | "square">("rounded");
+  const [renderMode, setRenderMode] = useState<"builder" | "custom_html">("builder");
+  const [customHtml, setCustomHtml] = useState("");
   const [domainId, setDomainId] = useState("slugly");
 
   const [buttonOpen, setButtonOpen] = useState(false);
@@ -92,6 +96,8 @@ export default function PageEditorPage() {
     setBackgroundColor(page.backgroundColor || "#F7F7FC");
     setTextColor(page.textColor || "#14152B");
     setButtonStyle(page.buttonStyle || "rounded");
+    setRenderMode(page.renderMode || "builder");
+    setCustomHtml(page.customHtml || "");
     setDomainId(page.domainId ? String(page.domainId) : "slugly");
   }, [page]);
 
@@ -180,6 +186,8 @@ export default function PageEditorPage() {
       backgroundColor,
       textColor,
       buttonStyle,
+      renderMode,
+      customHtml: customHtml.trim() || null,
       domainId: domainId === "slugly" ? null : Number(domainId),
       status,
     });
@@ -227,6 +235,55 @@ export default function PageEditorPage() {
     : `https://slugly.io/${page?.type === "bio" ? "bio" : "page"}/${slug || "your-page"}`;
 
   const radiusClass = buttonStyle === "pill" ? "rounded-full" : buttonStyle === "square" ? "rounded-md" : "rounded-2xl";
+
+  const customHtmlPreview = useMemo(() => {
+    let html = customHtml
+      .replaceAll("{{SLUGLY_PAGE_TITLE}}", title)
+      .replaceAll("{{SLUGLY_PAGE_HEADLINE}}", headline || title)
+      .replaceAll("{{SLUGLY_PAGE_DESCRIPTION}}", description);
+    for (const button of page?.buttons || []) {
+      html = html.replaceAll(`{{SLUGLY_CTA_${button.id}}}`, button.shortUrl || "#");
+    }
+    return html;
+  }, [customHtml, description, headline, page?.buttons, title]);
+
+  const insertStarterHtml = () => {
+    const firstButton = page?.buttons?.[0];
+    const ctaHref = firstButton ? `{{SLUGLY_CTA_${firstButton.id}}}` : "#";
+    setCustomHtml(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{SLUGLY_PAGE_TITLE}}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, system-ui, sans-serif; background: #f7f7fc; color: #14152b; }
+    .hero { min-height: 100vh; display: grid; place-items: center; padding: 48px 20px; }
+    .card { width: min(720px, 100%); background: white; border-radius: 28px; padding: 42px; box-shadow: 0 24px 80px rgba(20,21,43,.10); }
+    h1 { margin: 0 0 14px; font-size: clamp(36px, 7vw, 68px); line-height: 1; letter-spacing: -.04em; }
+    p { color: #6f6f8c; line-height: 1.65; }
+    .cta { display: inline-block; margin-top: 20px; padding: 14px 20px; border-radius: 14px; background: #5a3ff0; color: white; text-decoration: none; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <main class="hero">
+    <section class="card">
+      <h1>{{SLUGLY_PAGE_HEADLINE}}</h1>
+      <p>{{SLUGLY_PAGE_DESCRIPTION}}</p>
+      <a class="cta" href="${ctaHref}">Get started</a>
+    </section>
+  </main>
+</body>
+</html>`);
+    setRenderMode("custom_html");
+  };
+
+  const copyCtaToken = async (buttonId: number) => {
+    const token = `{{SLUGLY_CTA_${buttonId}}}`;
+    await navigator.clipboard.writeText(token);
+    toast.success("Tracked CTA token copied");
+  };
 
   const buttonClickMap = useMemo(() => {
     const map = new Map<number, any>();
@@ -281,7 +338,74 @@ export default function PageEditorPage() {
           <div className="space-y-5">
             <Card className="p-5">
               <h2 className="font-semibold">Page content & design</h2>
-              <p className="mt-1 text-xs text-muted-foreground">Edit the public experience. Preview updates immediately; Save publishes the configuration to Slugly.</p>
+              <p className="mt-1 text-xs text-muted-foreground">Use the visual builder or replace the public experience with your own HTML, CSS and JavaScript.</p>
+
+              <div className="mt-4 flex flex-wrap gap-2 rounded-lg border bg-muted/20 p-1.5">
+                <Button type="button" size="sm" variant={renderMode === "builder" ? "default" : "ghost"} onClick={() => setRenderMode("builder")}>
+                  <Smartphone className="mr-2 h-3.5 w-3.5" />Visual Builder
+                </Button>
+                <Button type="button" size="sm" variant={renderMode === "custom_html" ? "default" : "ghost"} onClick={() => setRenderMode("custom_html")}>
+                  <Code2 className="mr-2 h-3.5 w-3.5" />Custom HTML
+                </Button>
+              </div>
+
+              {renderMode === "custom_html" && (
+                <div className="mt-4 space-y-3">
+                  <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-3 text-xs leading-5 text-blue-900 dark:border-blue-900/40 dark:bg-blue-950/20 dark:text-blue-200">
+                    <div className="flex items-start gap-2">
+                      <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                      <div>
+                        <p className="font-medium">Secure custom-code sandbox</p>
+                        <p className="mt-1">HTML, CSS and JavaScript are supported, but the code cannot access Slugly account cookies or the parent dashboard. Native form submission is disabled; use connected Slugly CTA links for tracked actions. Use absolute HTTPS URLs for external assets.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <Label>Custom HTML</Label>
+                      <p className="text-[11px] text-muted-foreground">Paste a full HTML document or a fragment. Maximum 60,000 characters.</p>
+                    </div>
+                    <Button type="button" size="sm" variant="outline" onClick={insertStarterHtml}><Code2 className="mr-1.5 h-3.5 w-3.5" />Starter HTML</Button>
+                  </div>
+                  <Textarea
+                    value={customHtml}
+                    onChange={e => setCustomHtml(e.target.value.slice(0, 60000))}
+                    rows={18}
+                    spellCheck={false}
+                    className="min-h-[360px] font-mono text-xs leading-5"
+                    placeholder="<html>...</html>"
+                  />
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                    <span>{customHtml.length.toLocaleString()} / 60,000 characters</span>
+                    <span>Scripts run only inside the isolated Page sandbox.</span>
+                  </div>
+
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs font-medium">Slugly variables</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">Use these directly in your HTML. CTA tokens keep routing and analytics connected even if the Page domain changes.</p>
+                    <div className="mt-2 grid gap-2">
+                      <code className="rounded bg-muted px-2 py-1.5 text-[11px]">{{"{{SLUGLY_PAGE_TITLE}}"}}</code>
+                      <code className="rounded bg-muted px-2 py-1.5 text-[11px]">{{"{{SLUGLY_PAGE_HEADLINE}}"}}</code>
+                      <code className="rounded bg-muted px-2 py-1.5 text-[11px]">{{"{{SLUGLY_PAGE_DESCRIPTION}}"}}</code>
+                      {(page.buttons || []).map((button: any) => (
+                        <div key={button.id} className="flex min-w-0 items-center gap-2 rounded bg-muted px-2 py-1.5">
+                          <code className="min-w-0 flex-1 truncate text-[11px]">{`{{SLUGLY_CTA_${button.id}}}`}</code>
+                          <span className="hidden max-w-[240px] truncate text-[10px] text-muted-foreground md:inline">{button.label}</span>
+                          <Button type="button" size="icon" variant="ghost" className="h-6 w-6" onClick={() => copyCtaToken(button.id)}><Copy className="h-3 w-3" /></Button>
+                        </div>
+                      ))}
+                      {page.buttons.length === 0 && <p className="text-[11px] text-muted-foreground">Add a CTA below to get a tracked URL token for your HTML.</p>}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {renderMode === "custom_html" && (
+                <p className="mt-4 rounded-lg border bg-muted/20 p-3 text-[11px] text-muted-foreground">
+                  Page title, slug and resolver domain below still apply. Visual-builder colors, avatar/hero and button shape are kept for when you switch back to Visual Builder.
+                </p>
+              )}
 
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
                 <div>
@@ -378,6 +502,11 @@ export default function PageEditorPage() {
                           {button.subtitle && <p className="mt-0.5 text-xs text-muted-foreground">{button.subtitle}</p>}
                           <p className="mt-1 truncate text-[11px] text-muted-foreground">{button.destinationUrl}</p>
                           <p className="mt-1 text-[11px] text-muted-foreground">{stat?.totalClicks || 0} clicks · {stat?.uniqueClicks || 0} unique · {button.shortUrl}</p>
+                          {renderMode === "custom_html" && (
+                            <button type="button" className="mt-1 font-mono text-[10px] text-primary hover:underline" onClick={() => copyCtaToken(button.id)}>
+                              Copy HTML token: {`{{SLUGLY_CTA_${button.id}}}`}
+                            </button>
+                          )}
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           <div className="flex items-center gap-2 rounded-md border px-2">
@@ -431,6 +560,23 @@ export default function PageEditorPage() {
                 <div><p className="text-sm font-semibold">Live preview</p><p className="text-[11px] text-muted-foreground">{currentPublicUrl}</p></div>
                 <Smartphone className="h-4 w-4 text-muted-foreground" />
               </div>
+              {renderMode === "custom_html" ? (
+                <div className="mx-auto max-w-[390px] overflow-hidden rounded-[30px] border bg-white shadow-sm">
+                  {customHtml.trim() ? (
+                    <iframe
+                      title="Custom HTML preview"
+                      srcDoc={customHtmlPreview}
+                      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals"
+                      referrerPolicy="no-referrer"
+                      className="h-[650px] w-full border-0 bg-white"
+                    />
+                  ) : (
+                    <div className="grid h-[650px] place-items-center p-8 text-center text-sm text-muted-foreground">
+                      Paste HTML or load the starter template to preview your custom Page.
+                    </div>
+                  )}
+                </div>
+              ) : (
               <div className="mx-auto max-w-[390px] overflow-hidden rounded-[30px] border shadow-sm" style={{ backgroundColor, color: textColor }}>
                 <div className="min-h-[650px] p-5">
                   {page.type === "landing" && heroImageUrl && <img src={heroImageUrl} alt="" className="mb-6 h-48 w-full rounded-2xl object-cover" />}
@@ -457,6 +603,7 @@ export default function PageEditorPage() {
                   </div>
                 </div>
               </div>
+              )}
             </Card>
           </div>
         </div>
