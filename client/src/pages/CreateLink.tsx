@@ -27,7 +27,7 @@ type CustomDomain = {
 };
 
 type RoutingRuleDraft = {
-  type: "geo" | "device" | "ab";
+  type: "geo" | "device" | "ab" | "deeplink";
   config: Record<string, any>;
   priority: number;
 };
@@ -96,7 +96,7 @@ export default function CreateLink() {
   const [customDomains, setCustomDomains] = useState<CustomDomain[]>([]);
   const [selectedDomainId, setSelectedDomainId] = useState("slugly");
   const [showRouting, setShowRouting] = useState(false);
-  const [routingType, setRoutingType] = useState<"geo" | "device" | "ab">("geo");
+  const [routingType, setRoutingType] = useState<"geo" | "device" | "ab" | "deeplink">("geo");
   const [geoCountries, setGeoCountries] = useState("");
   const [geoDestination, setGeoDestination] = useState("");
   const [deviceTypes, setDeviceTypes] = useState<string[]>([]);
@@ -105,6 +105,15 @@ export default function CreateLink() {
   const [abDestinationB, setAbDestinationB] = useState("");
   const [abWeightA, setAbWeightA] = useState(50);
   const [abWeightB, setAbWeightB] = useState(50);
+  const [deepIosScheme, setDeepIosScheme] = useState("");
+  const [deepIosStore, setDeepIosStore] = useState("");
+  const [deepIosTeamId, setDeepIosTeamId] = useState("");
+  const [deepIosBundleId, setDeepIosBundleId] = useState("");
+  const [deepAndroidScheme, setDeepAndroidScheme] = useState("");
+  const [deepAndroidStore, setDeepAndroidStore] = useState("");
+  const [deepAndroidPackage, setDeepAndroidPackage] = useState("");
+  const [deepAndroidFingerprint, setDeepAndroidFingerprint] = useState("");
+  const [deepWebFallback, setDeepWebFallback] = useState("");
   const [routingError, setRoutingError] = useState("");
   const pendingRoutingRuleRef = useRef<RoutingRuleDraft | null>(null);
 
@@ -123,7 +132,8 @@ export default function CreateLink() {
   const routingFeatures = workspaceState?.planConfig?.features;
   const canUseGeoRouting = !!routingFeatures?.geoTarget;
   const canUseAbRouting = !!routingFeatures?.abTest;
-  const canUseRouting = canUseGeoRouting || canUseAbRouting;
+  const canUseDeepLinks = !!routingFeatures?.deepLinks;
+  const canUseRouting = canUseGeoRouting || canUseAbRouting || canUseDeepLinks;
 
   useEffect(() => {
     if (!user || !workspaceId) return;
@@ -317,7 +327,7 @@ export default function CreateLink() {
           config: { rules: [{ devices: deviceTypes, destination }] },
           priority: 1,
         };
-      } else {
+      } else if (routingType === "ab") {
         const destinationA = normalizeDestinationUrl(abDestinationA);
         const destinationB = normalizeDestinationUrl(abDestinationB);
         if (!destinationA || !destinationB) {
@@ -337,6 +347,45 @@ export default function CreateLink() {
               { name: "A", destination: destinationA, weight: abWeightA },
               { name: "B", destination: destinationB, weight: abWeightB },
             ],
+          },
+          priority: 1,
+        };
+      } else {
+        const fallback = normalizeDestinationUrl(deepWebFallback || normalizedUrl);
+        const fingerprints = deepAndroidFingerprint.split(",").map(value => value.trim().toUpperCase()).filter(Boolean);
+        if (!fallback) {
+          setRoutingError("Enter a valid web fallback URL for the mobile deep link.");
+          return;
+        }
+        if (!deepIosScheme.trim() && !deepAndroidScheme.trim() && !deepIosTeamId.trim() && !deepAndroidPackage.trim()) {
+          setRoutingError("Configure at least iOS or Android app opening.");
+          return;
+        }
+        if ((deepIosTeamId.trim() && !deepIosBundleId.trim()) || (!deepIosTeamId.trim() && deepIosBundleId.trim())) {
+          setRoutingError("Apple Team ID and Bundle ID must be provided together.");
+          return;
+        }
+        if ((deepAndroidPackage.trim() && fingerprints.length === 0) || (!deepAndroidPackage.trim() && fingerprints.length > 0)) {
+          setRoutingError("Android package name and SHA-256 fingerprint must be provided together.");
+          return;
+        }
+        pendingRoutingRuleRef.current = {
+          type: "deeplink",
+          config: {
+            ios: (deepIosScheme || deepIosStore || deepIosTeamId || deepIosBundleId) ? {
+              scheme: deepIosScheme.trim() || undefined,
+              appStoreUrl: deepIosStore.trim() || undefined,
+              teamId: deepIosTeamId.trim().toUpperCase() || undefined,
+              bundleId: deepIosBundleId.trim() || undefined,
+            } : undefined,
+            android: (deepAndroidScheme || deepAndroidStore || deepAndroidPackage || deepAndroidFingerprint) ? {
+              scheme: deepAndroidScheme.trim() || undefined,
+              playStoreUrl: deepAndroidStore.trim() || undefined,
+              packageName: deepAndroidPackage.trim() || undefined,
+              sha256CertFingerprints: fingerprints.length ? fingerprints : undefined,
+            } : undefined,
+            webFallback: fallback,
+            fallbackDelayMs: 2200,
           },
           priority: 1,
         };
@@ -412,6 +461,15 @@ export default function CreateLink() {
     setAbDestinationB("");
     setAbWeightA(50);
     setAbWeightB(50);
+    setDeepIosScheme("");
+    setDeepIosStore("");
+    setDeepIosTeamId("");
+    setDeepIosBundleId("");
+    setDeepAndroidScheme("");
+    setDeepAndroidStore("");
+    setDeepAndroidPackage("");
+    setDeepAndroidFingerprint("");
+    setDeepWebFallback("");
     setRoutingError("");
     pendingRoutingRuleRef.current = null;
   };
@@ -606,6 +664,7 @@ export default function CreateLink() {
                           <SelectItem value="geo">Country targeting</SelectItem>
                           <SelectItem value="device">Device targeting</SelectItem>
                           {canUseAbRouting && <SelectItem value="ab">A/B traffic split</SelectItem>}
+                          {canUseDeepLinks && <SelectItem value="deeplink">Mobile deep link</SelectItem>}
                         </SelectContent>
                       </Select>
                     </div>
@@ -697,6 +756,24 @@ export default function CreateLink() {
                       </div>
                     )}
 
+                    {routingType === "deeplink" && (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <TextField label="iOS App Scheme" value={deepIosScheme} onChange={setDeepIosScheme} placeholder="myapp://product/123" disabled={linkLimitReached} />
+                          <TextField label="App Store URL" value={deepIosStore} onChange={setDeepIosStore} placeholder="https://apps.apple.com/app/..." disabled={linkLimitReached} />
+                          <TextField label="Apple Team ID" value={deepIosTeamId} onChange={(value) => setDeepIosTeamId(value.toUpperCase())} placeholder="ABCDE12345" disabled={linkLimitReached} />
+                          <TextField label="Bundle ID" value={deepIosBundleId} onChange={setDeepIosBundleId} placeholder="com.company.app" disabled={linkLimitReached} />
+                          <TextField label="Android App Scheme" value={deepAndroidScheme} onChange={setDeepAndroidScheme} placeholder="myapp://product/123" disabled={linkLimitReached} />
+                          <TextField label="Play Store URL" value={deepAndroidStore} onChange={setDeepAndroidStore} placeholder="https://play.google.com/store/apps/details?id=..." disabled={linkLimitReached} />
+                          <TextField label="Android Package" value={deepAndroidPackage} onChange={setDeepAndroidPackage} placeholder="com.company.app" disabled={linkLimitReached} />
+                          <TextField label="SHA-256 Fingerprint" value={deepAndroidFingerprint} onChange={setDeepAndroidFingerprint} placeholder="AA:BB:CC:..." disabled={linkLimitReached} />
+                        </div>
+                        <TextField label="Web Fallback" value={deepWebFallback} onChange={setDeepWebFallback} placeholder={url || "https://example.com"} disabled={linkLimitReached} />
+                        <p className="text-xs text-muted-foreground">
+                          Custom schemes work on any Slugly link. Apple Universal Links and Android App Links are activated automatically when this link uses a verified custom domain and native app IDs are provided.
+                        </p>
+                      </div>
+                    )}
                     {routingError && <p className="text-xs text-destructive">{routingError}</p>}
                     <p className="text-xs text-muted-foreground">
                       This creates the first routing rule with the link. Add more rules, Deep Links, and retargeting pixels from Manage Routing after creation.
