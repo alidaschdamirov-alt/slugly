@@ -411,32 +411,53 @@ export default function LinkRules() {
 
               {/* Deep link config */}
               {selectedType === "deeplink" && (
-                <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-5">
+                  <div className="rounded-lg border p-4 space-y-3">
                     <div>
-                      <Label>iOS Scheme</Label>
-                      <Input value={iosScheme} onChange={(e) => setIosScheme(e.target.value)} placeholder="myapp://path" />
+                      <p className="text-sm font-medium">iOS</p>
+                      <p className="text-xs text-muted-foreground">Custom scheme is the fallback opener. Team ID + Bundle ID activate Apple Universal Links on a verified custom domain.</p>
                     </div>
-                    <div>
-                      <Label>App Store URL</Label>
-                      <Input value={iosAppStore} onChange={(e) => setIosAppStore(e.target.value)} placeholder="https://apps.apple.com/..." />
-                    </div>
-                    <div>
-                      <Label>Android Scheme</Label>
-                      <Input value={androidScheme} onChange={(e) => setAndroidScheme(e.target.value)} placeholder="myapp://path" />
-                    </div>
-                    <div>
-                      <Label>Play Store URL</Label>
-                      <Input value={androidPlayStore} onChange={(e) => setAndroidPlayStore(e.target.value)} placeholder="https://play.google.com/..." />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div><Label>App Scheme</Label><Input value={iosScheme} onChange={(e) => setIosScheme(e.target.value)} placeholder="myapp://product/123" /></div>
+                      <div><Label>App Store URL</Label><Input value={iosAppStore} onChange={(e) => setIosAppStore(e.target.value)} placeholder="https://apps.apple.com/app/..." /></div>
+                      <div><Label>Apple Team ID</Label><Input value={iosTeamId} onChange={(e) => setIosTeamId(e.target.value.toUpperCase())} placeholder="ABCDE12345" /></div>
+                      <div><Label>Bundle ID</Label><Input value={iosBundleId} onChange={(e) => setIosBundleId(e.target.value)} placeholder="com.company.app" /></div>
                     </div>
                   </div>
-                  <div>
-                    <Label>Web Fallback URL</Label>
-                    <Input value={webFallback} onChange={(e) => setWebFallback(e.target.value)} placeholder="https://example.com" />
+
+                  <div className="rounded-lg border p-4 space-y-3">
+                    <div>
+                      <p className="text-sm font-medium">Android</p>
+                      <p className="text-xs text-muted-foreground">Package + SHA-256 signing fingerprint activate Android App Links on a verified custom domain.</p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div><Label>App Scheme</Label><Input value={androidScheme} onChange={(e) => setAndroidScheme(e.target.value)} placeholder="myapp://product/123" /></div>
+                      <div><Label>Play Store URL</Label><Input value={androidPlayStore} onChange={(e) => setAndroidPlayStore(e.target.value)} placeholder="https://play.google.com/store/apps/details?id=..." /></div>
+                      <div><Label>Package Name</Label><Input value={androidPackageName} onChange={(e) => setAndroidPackageName(e.target.value)} placeholder="com.company.app" /></div>
+                      <div><Label>SHA-256 Fingerprint</Label><Input value={androidFingerprint} onChange={(e) => setAndroidFingerprint(e.target.value)} placeholder="AA:BB:CC:... (comma-separate multiple)" /></div>
+                    </div>
                   </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_130px] gap-3">
+                    <div><Label>Web Fallback URL *</Label><Input value={webFallback} onChange={(e) => setWebFallback(e.target.value)} placeholder="https://example.com/product/123" /></div>
+                    <div><Label>Fallback Delay</Label><Input type="number" min={800} max={8000} step={100} value={deepLinkDelay} onChange={(e) => setDeepLinkDelay(parseInt(e.target.value) || 2200)} /></div>
+                  </div>
+
+                  {routingAnalytics?.customDomain ? (
+                    <div className="rounded-lg border border-green-200 bg-green-50/70 p-3 dark:border-green-900/50 dark:bg-green-950/20">
+                      <div className="flex items-center gap-2 text-sm font-medium text-green-800 dark:text-green-300"><CheckCircle2 className="h-4 w-4" /> Native association available</div>
+                      <p className="mt-1 text-xs text-muted-foreground">Slugly automatically serves the Apple and Android association files for this branded domain.</p>
+                      <code className="mt-2 block break-all text-xs">https://{routingAnalytics.customDomain}/.well-known/apple-app-site-association</code>
+                      <code className="mt-1 block break-all text-xs">https://{routingAnalytics.customDomain}/.well-known/assetlinks.json</code>
+                      <p className="mt-2 text-xs text-muted-foreground">iOS entitlement: <strong>applinks:{routingAnalytics.customDomain}</strong>. Android: use the same host in your HTTPS intent-filter with android:autoVerify="true".</p>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+                      Custom schemes and store fallback work on the default Slugly URL. Apple Universal Links and Android App Links require this link to use a verified custom domain.
+                    </div>
+                  )}
                 </div>
               )}
-
               {/* Pixel config */}
               {selectedType === "pixel" && (
                 <div className="space-y-3">
