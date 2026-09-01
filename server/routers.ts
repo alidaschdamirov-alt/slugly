@@ -562,7 +562,7 @@ export const appRouter = router({
         const result = await db.createLink({
           userId: ctx.user.id,
           projectId: finalProjectId,
-          destinationUrl: normalizedDestination,
+          destinationUrl: input.destinationUrl,
           shortCode,
           title: input.title ?? null,
           tags: input.tags ?? null,
@@ -1206,7 +1206,7 @@ export const appRouter = router({
         const link = await db.createLink({
           userId: ctx.user.id,
           projectId,
-          destinationUrl: input.destinationUrl,
+          destinationUrl: normalizedDestination,
           shortCode,
           title: `${page.title} · ${input.label}`,
           tags: ["page", page.type],
