@@ -473,11 +473,6 @@ export const appRouter = router({
       )
       .mutation(async ({ ctx, input }) => {
         // Plan limit check via workspace
-        const existingProduct = await db.getProductQrByWorkspaceAndGtin(ctx.workspace.id, gtin.normalized14);
-        if (existingProduct) {
-          throw new Error("This GTIN already has a Product QR in the current workspace.");
-        }
-
         const config = await ws.getPlanConfig(ctx.workspace.plan as any);
         const linkCount = await ws.countWorkspaceLinks(ctx.workspace.id);
         const limitCheck = ws.checkLimit(config, "links", linkCount);
@@ -875,6 +870,11 @@ export const appRouter = router({
         const gtin = validateGtin(input.gtin);
         if (!gtin.valid || !gtin.normalized14 || !gtin.original) {
           throw new Error(gtin.error || "Invalid GTIN.");
+        }
+
+        const existingProduct = await db.getProductQrByWorkspaceAndGtin(ctx.workspace.id, gtin.normalized14);
+        if (existingProduct) {
+          throw new Error("This GTIN already has a Product QR in the current workspace.");
         }
 
         const config = await ws.getPlanConfig(ctx.workspace.plan as any);
