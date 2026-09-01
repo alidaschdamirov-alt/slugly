@@ -27,6 +27,7 @@ import {
   FileText,
   Menu,
   Package,
+  LayoutTemplate,
 } from "lucide-react";
 import NotificationBell from "./NotificationBell";
 import { useState } from "react";
@@ -38,6 +39,7 @@ const navItems = [
   { icon: Plus, label: "Create Link", path: "/create" },
   { icon: QrCode, label: "QR Codes", path: "/qr" },
   { icon: Package, label: "Product QR", path: "/product-qr" },
+  { icon: LayoutTemplate, label: "Pages", path: "/pages" },
   { icon: Tag, label: "Tags", path: "/tags" },
   { icon: Globe, label: "Domains", path: "/domains" },
   { icon: Users, label: "Team", path: "/team" },
@@ -80,7 +82,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                       const isActive = location === item.path ||
                         (item.path === "/dashboard" && location.startsWith("/project")) ||
                         (item.path === "/tags" && location.startsWith("/tags")) ||
-                        (item.path === "/team" && location.startsWith("/team"));
+                        (item.path === "/team" && location.startsWith("/team")) ||
+                        (item.path === "/pages" && location.startsWith("/pages"));
                       return (
                         <button key={item.path} onClick={() => navigateTo(item.path)} className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"}`}>
                           <item.icon className="h-4 w-4" />{item.label}
@@ -110,7 +113,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 const isActive = location === item.path ||
                   (item.path === "/dashboard" && location.startsWith("/project")) ||
                   (item.path === "/tags" && location.startsWith("/tags")) ||
-                  (item.path === "/team" && location.startsWith("/team"));
+                  (item.path === "/team" && location.startsWith("/team")) ||
+                  (item.path === "/pages" && location.startsWith("/pages"));
                 return <button key={item.path} onClick={() => setLocation(item.path)} className={`whitespace-nowrap rounded-[9px] px-[11px] py-2 text-sm font-semibold transition-colors ${isActive ? "bg-[#EDEBFB] text-[#4A2FE0]" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}>{item.label}</button>;
               })}
             </nav>
