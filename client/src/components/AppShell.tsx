@@ -26,6 +26,7 @@ import {
   Users,
   FileText,
   Menu,
+  Package,
 } from "lucide-react";
 import NotificationBell from "./NotificationBell";
 import { useState } from "react";
@@ -36,6 +37,7 @@ const navItems = [
   { icon: LayoutDashboard, label: "Projects", path: "/dashboard" },
   { icon: Plus, label: "Create Link", path: "/create" },
   { icon: QrCode, label: "QR Codes", path: "/qr" },
+  { icon: Package, label: "Product QR", path: "/product-qr" },
   { icon: Tag, label: "Tags", path: "/tags" },
   { icon: Globe, label: "Domains", path: "/domains" },
   { icon: Users, label: "Team", path: "/team" },

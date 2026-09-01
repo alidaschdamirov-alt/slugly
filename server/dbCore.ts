@@ -31,6 +31,7 @@ import {
   notifications,
   notificationRecipients,
   deepLinkEvents,
+  productQrs,
 } from "../drizzle/schema";
 import type {
   InsertProject,
@@ -41,6 +42,7 @@ import type {
   InsertNotification,
   InsertNotificationRecipient,
   InsertDeepLinkEvent,
+  InsertProductQr,
 } from "../drizzle/schema";
 import { ENV, isProtectedAdminEmail } from "./_core/env";
 import { getDatabaseUrl } from "./_core/databaseUrl";
@@ -589,6 +591,65 @@ export async function deleteDomain(id: number) {
   const db = await getDb();
   if (!db) return;
   await db.delete(domains).where(eq(domains.id, id));
+}
+
+// ============ GS1 PRODUCT QR HELPERS ============
+
+export async function createProductQr(data: InsertProductQr) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(productQrs).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getProductQrsByWorkspace(workspaceId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(productQrs)
+    .where(eq(productQrs.workspaceId, workspaceId))
+    .orderBy(desc(productQrs.createdAt));
+}
+
+export async function getProductQrById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db.select().from(productQrs).where(eq(productQrs.id, id)).limit(1);
+  return row;
+}
+
+export async function getProductQrByWorkspaceAndGtin(workspaceId: number, gtin: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [row] = await db
+    .select()
+    .from(productQrs)
+    .where(and(eq(productQrs.workspaceId, workspaceId), eq(productQrs.gtin, gtin)))
+    .limit(1);
+  return row;
+}
+
+export async function getProductQrByDomainAndGtin(domainId: number | null, gtin: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const condition = domainId == null
+    ? and(isNull(productQrs.domainId), eq(productQrs.gtin, gtin))
+    : and(eq(productQrs.domainId, domainId), eq(productQrs.gtin, gtin));
+  const [row] = await db.select().from(productQrs).where(condition).orderBy(desc(productQrs.createdAt)).limit(1);
+  return row;
+}
+
+export async function updateProductQr(id: number, data: Partial<InsertProductQr>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(productQrs).set(data).where(eq(productQrs.id, id));
+}
+
+export async function deleteProductQr(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(productQrs).where(eq(productQrs.id, id));
 }
 
 // ============ SITE SETTINGS ============
