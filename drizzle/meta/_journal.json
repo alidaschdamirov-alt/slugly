@@ -99,6 +99,13 @@
       "when": 1788268200000,
       "tag": "0013_pages_product",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "5",
+      "when": 1788282600000,
+      "tag": "0014_pages_custom_html",
+      "breakpoints": true
     }
   ]
 }
