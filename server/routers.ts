@@ -668,18 +668,30 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => {
         const link = await db.getLinkById(input.id);
         if (!link || link.userId !== ctx.user.id) return null;
-        const [clickCount, clicksOverTime, stats] = await Promise.all([
-          db.getClickCountByLinkId(input.id),
-          db.getClicksOverTime(input.id, input.days),
-          db.getClickStats(input.id),
-        ]);
+        const routing = await import("./rules");
+        const [clickCount, clicksOverTime, stats, routingStats, routingRules] =
+          await Promise.all([
+            db.getClickCountByLinkId(input.id),
+            db.getClicksOverTime(input.id, input.days),
+            db.getClickStats(input.id),
+            db.getRoutingClickStats(input.id, input.days),
+            routing.getAllRulesForLink(input.id),
+          ]);
         // Get custom domain if link has one
         let customDomain: string | null = null;
         if (link.domainId) {
           const domain = await db.getDomainById(link.domainId);
           if (domain?.verified) customDomain = domain.hostname;
         }
-        return { link, clickCount, clicksOverTime, customDomain, ...stats };
+        return {
+          link,
+          clickCount,
+          clicksOverTime,
+          customDomain,
+          routingStats,
+          routingRules,
+          ...stats,
+        };
       }),
 
     // URL preview (OG metadata + favicon)
