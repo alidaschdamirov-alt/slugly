@@ -205,25 +205,25 @@ redirectRouter.get("/:shortCode([a-zA-Z0-9_-]{3,32})", async (req: Request, res:
     };
     const evalResult = evaluateRules(rules, evalCtx);
 
-    // Build destination URL with UTM params + query passthrough
-    let destinationUrl = evalResult.destination;
-    try {
-      const url = new URL(destinationUrl);
-      // Append stored UTM params
-      if (link.utmSource) url.searchParams.set("utm_source", link.utmSource);
-      if (link.utmMedium) url.searchParams.set("utm_medium", link.utmMedium);
-      if (link.utmCampaign) url.searchParams.set("utm_campaign", link.utmCampaign);
-      if (link.utmTerm) url.searchParams.set("utm_term", link.utmTerm);
-      if (link.utmContent) url.searchParams.set("utm_content", link.utmContent);
-      // Query parameter passthrough: all incoming query params are appended to destination
-      const incomingParams = new URL(req.url, `http://${req.headers.host}`).searchParams;
-      incomingParams.forEach((value, key) => {
-        url.searchParams.append(key, value);
-      });
-      destinationUrl = url.toString();
-    } catch {
-      // If URL parsing fails (e.g. deep link scheme), use as-is
-    }
+    // Build destination URL with stored UTM parameters and incoming query passthrough.
+    const appendRedirectParams = (target: string) => {
+      if (!target) return target;
+      try {
+        const targetUrl = new URL(target);
+        if (link.utmSource) targetUrl.searchParams.set("utm_source", link.utmSource);
+        if (link.utmMedium) targetUrl.searchParams.set("utm_medium", link.utmMedium);
+        if (link.utmCampaign) targetUrl.searchParams.set("utm_campaign", link.utmCampaign);
+        if (link.utmTerm) targetUrl.searchParams.set("utm_term", link.utmTerm);
+        if (link.utmContent) targetUrl.searchParams.set("utm_content", link.utmContent);
+        const incomingParams = new URL(req.url, `http://${req.headers.host}`).searchParams;
+        incomingParams.forEach((value, key) => targetUrl.searchParams.append(key, value));
+        return targetUrl.toString();
+      } catch {
+        return target;
+      }
+    };
+
+    let destinationUrl = appendRedirectParams(evalResult.destination);
 
     const recordCurrentClick = () =>
       recordClick({
@@ -240,11 +240,17 @@ redirectRouter.get("/:shortCode([a-zA-Z0-9_-]{3,32})", async (req: Request, res:
         variant: evalResult.variant || null,
       }).catch(err => console.error("[Click] Failed to record:", err));
 
-    // Deep link handling: serve interstitial that attempts app scheme.
-    // Record the visit before returning the interstitial so routing analytics stay complete.
-    if (evalResult.isDeepLink && evalResult.deepLinkScheme) {
+    // Native Universal/App Links may open before the request reaches Slugly.
+    // If it reaches us, try the custom scheme and then use store/web fallback.
+    if (evalResult.isDeepLink && evalResult.deepLink) {
       recordCurrentClick();
-      return res.status(200).send(renderDeepLinkPage(evalResult.deepLinkScheme, destinationUrl, shortCode));
+      const deepLink = {
+        ...evalResult.deepLink,
+        scheme: evalResult.deepLink.scheme ? appendRedirectParams(evalResult.deepLink.scheme) : undefined,
+        storeUrl: evalResult.deepLink.storeUrl ? appendRedirectParams(evalResult.deepLink.storeUrl) : undefined,
+        webFallback: appendRedirectParams(evalResult.deepLink.webFallback || destinationUrl),
+      };
+      return res.status(200).set("Cache-Control", "no-store").send(renderDeepLinkPage(deepLink, shortCode));
     }
 
     // Pixel interstitial: fire tracking pixels before redirecting.
