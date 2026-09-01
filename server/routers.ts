@@ -562,7 +562,7 @@ export const appRouter = router({
         const result = await db.createLink({
           userId: ctx.user.id,
           projectId: finalProjectId,
-          destinationUrl: input.destinationUrl,
+          destinationUrl: normalizedDestination,
           shortCode,
           title: input.title ?? null,
           tags: input.tags ?? null,
@@ -1187,8 +1187,9 @@ export const appRouter = router({
           throw new Error("Your workspace link limit has been reached. Every Page button uses a Slugly link for routing and analytics.");
         }
 
+        const normalizedDestination = normalizeHttpUrl(input.destinationUrl, "Destination URL");
         const { checkUrlSafety } = await import("./safeBrowsing");
-        const safety = await checkUrlSafety(input.destinationUrl);
+        const safety = await checkUrlSafety(normalizedDestination);
         if (!safety.safe) throw new Error(`URL rejected: ${safety.reason || "flagged as unsafe"}`);
 
         let shortCode = nanoid(8);
@@ -1251,12 +1252,13 @@ export const appRouter = router({
         }
 
         if (input.destinationUrl) {
+          const normalizedDestination = normalizeHttpUrl(input.destinationUrl, "Destination URL");
           const { checkUrlSafety } = await import("./safeBrowsing");
-          const safety = await checkUrlSafety(input.destinationUrl);
+          const safety = await checkUrlSafety(normalizedDestination);
           if (!safety.safe) throw new Error(`URL rejected: ${safety.reason || "flagged as unsafe"}`);
           const link = await db.getLinkById(button.linkId);
           if (link) {
-            await db.updateLink(link.id, { destinationUrl: input.destinationUrl });
+            await db.updateLink(link.id, { destinationUrl: normalizedDestination });
             const { invalidateLinkCache } = await import("./redirect");
             invalidateLinkCache(link.shortCode);
           }
