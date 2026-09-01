@@ -188,6 +188,32 @@ export const deepLinkEvents = mysqlTable("deep_link_events", {
 export type DeepLinkEvent = typeof deepLinkEvents.$inferSelect;
 export type InsertDeepLinkEvent = typeof deepLinkEvents.$inferInsert;
 
+// ============ GS1 PRODUCT QR ============
+
+export const productQrs = mysqlTable("product_qrs", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  userId: int("userId").notNull(),
+  linkId: int("linkId").notNull(),
+  domainId: int("domainId"),
+  gtin: varchar("gtin", { length: 14 }).notNull(),
+  sourceGtin: varchar("sourceGtin", { length: 14 }).notNull(),
+  productName: varchar("productName", { length: 255 }).notNull(),
+  brand: varchar("brand", { length: 255 }),
+  batchLot: varchar("batchLot", { length: 20 }),
+  serialNumber: varchar("serialNumber", { length: 20 }),
+  expiryDate: varchar("expiryDate", { length: 10 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  workspaceIdx: index("product_qrs_workspace_idx").on(table.workspaceId),
+  gtinIdx: index("product_qrs_gtin_idx").on(table.gtin),
+  linkIdx: index("product_qrs_link_idx").on(table.linkId),
+}));
+
+export type ProductQr = typeof productQrs.$inferSelect;
+export type InsertProductQr = typeof productQrs.$inferInsert;
+
 // ============ UTM TEMPLATES ============
 
 export const utmTemplates = mysqlTable("utm_templates", {
