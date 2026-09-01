@@ -24,9 +24,28 @@ export interface AbTestConfig {
 }
 
 export interface DeepLinkConfig {
-  ios?: { scheme: string; appStoreUrl: string };
-  android?: { scheme: string; playStoreUrl: string };
+  ios?: {
+    scheme?: string;
+    appStoreUrl?: string;
+    teamId?: string;
+    bundleId?: string;
+  };
+  android?: {
+    scheme?: string;
+    playStoreUrl?: string;
+    packageName?: string;
+    sha256CertFingerprints?: string[];
+  };
   webFallback: string;
+  fallbackDelayMs?: number;
+}
+
+export interface DeepLinkTarget {
+  platform: "ios" | "android";
+  scheme?: string;
+  storeUrl?: string;
+  webFallback: string;
+  fallbackDelayMs: number;
 }
 
 export interface PixelRuleConfig {
@@ -115,7 +134,7 @@ export interface EvaluationResult {
   pixelIds?: number[];    // pixels to fire
   pixelDelay?: number;    // interstitial delay
   isDeepLink?: boolean;
-  deepLinkScheme?: string;
+  deepLink?: DeepLinkTarget;
 }
 
 /**
@@ -164,21 +183,30 @@ export function evaluateRules(rules: LinkRule[], ctx: EvaluationContext): Evalua
 
       case "deeplink": {
         const config = rule.config as unknown as DeepLinkConfig;
-        if (ctx.deviceType === "mobile") {
-          // Check iOS vs Android from UA
-          if (/iphone|ipad|ipod/i.test(ctx.userAgent) && config.ios) {
-            result.destination = config.ios.scheme;
-            result.isDeepLink = true;
-            result.deepLinkScheme = config.ios.scheme;
-          } else if (/android/i.test(ctx.userAgent) && config.android) {
-            result.destination = config.android.scheme;
-            result.isDeepLink = true;
-            result.deepLinkScheme = config.android.scheme;
-          } else {
-            result.destination = config.webFallback;
-          }
+        const fallbackDelayMs = Math.min(Math.max(config.fallbackDelayMs || 2200, 800), 8000);
+
+        if (/iphone|ipad|ipod/i.test(ctx.userAgent) && config.ios) {
+          result.destination = config.webFallback || result.destination;
+          result.isDeepLink = true;
+          result.deepLink = {
+            platform: "ios",
+            scheme: config.ios.scheme || undefined,
+            storeUrl: config.ios.appStoreUrl || undefined,
+            webFallback: config.webFallback || result.destination,
+            fallbackDelayMs,
+          };
+        } else if (/android/i.test(ctx.userAgent) && config.android) {
+          result.destination = config.webFallback || result.destination;
+          result.isDeepLink = true;
+          result.deepLink = {
+            platform: "android",
+            scheme: config.android.scheme || undefined,
+            storeUrl: config.android.playStoreUrl || undefined,
+            webFallback: config.webFallback || result.destination,
+            fallbackDelayMs,
+          };
         } else {
-          result.destination = config.webFallback;
+          result.destination = config.webFallback || result.destination;
         }
         break;
       }
