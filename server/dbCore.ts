@@ -793,6 +793,36 @@ export async function getPageViewStats(pageId: number, days: number = 30) {
   };
 }
 
+export async function getPageButtonClickStats(pageId: number, days: number = 30) {
+  const db = await getDb();
+  if (!db) return [] as Array<{ linkId: number; total: number; unique: number }>;
+  const buttons = await getPageButtons(pageId);
+  const linkIds = buttons.map(button => button.linkId);
+  if (linkIds.length === 0) return [];
+
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const rows = await db
+    .select({
+      linkId: clicks.linkId,
+      total: sql<number>`COUNT(*)`,
+      unique: sql<number>`COUNT(DISTINCT ${clicks.ipHash})`,
+    })
+    .from(clicks)
+    .where(and(
+      inArray(clicks.linkId, linkIds),
+      gte(clicks.timestamp, since),
+      eq(clicks.isBot, false)
+    ))
+    .groupBy(clicks.linkId);
+
+  return rows.map(row => ({
+    linkId: row.linkId,
+    total: Number(row.total || 0),
+    unique: Number(row.unique || 0),
+  }));
+}
+
+
 // ============ SITE SETTINGS ============
 
 export async function getSiteSetting(key: string): Promise<string | null> {
