@@ -23,6 +23,8 @@ const TagsPage = lazy(() => import("./pages/TagsPage"));
 const TagAnalytics = lazy(() => import("./pages/TagAnalytics"));
 const QrCodesPage = lazy(() => import("./pages/QrCodesPage"));
 const ProductQrPage = lazy(() => import("./pages/ProductQrPage"));
+const PagesPage = lazy(() => import("./pages/PagesPage"));
+const PageEditorPage = lazy(() => import("./pages/PageEditorPage"));
 const ReportPage = lazy(() => import("./pages/ReportPage"));
 const AuthPage = lazy(() => import("./pages/AuthPage"));
 const AdminRoute = lazy(() => import("./pages/AdminRoute"));
@@ -72,6 +74,8 @@ function AppRoutes() {
         <Route path="/tags/:tag" component={TagAnalytics} />
         <Route path="/qr" component={QrCodesPage} />
         <Route path="/product-qr" component={ProductQrPage} />
+        <Route path="/pages/:id" component={PageEditorPage} />
+        <Route path="/pages" component={PagesPage} />
         <Route path="/report" component={ReportPage} />
         <Route path="/reports" component={ExportReport} />
         <Route path="/team" component={Team} />
@@ -108,6 +112,7 @@ function getRouteEvent(location: string) {
   if (location.startsWith("/team")) return "team_opened";
   if (location.startsWith("/billing")) return "billing_opened";
   if (location.startsWith("/domains")) return "domains_opened";
+  if (location.startsWith("/pages")) return "pages_opened";
   if (location.startsWith("/product-qr")) return "product_qr_opened";
   if (location.startsWith("/qr")) return "qr_page_opened";
   if (location.startsWith("/tags")) return "tags_opened";
