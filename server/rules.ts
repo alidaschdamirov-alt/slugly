@@ -186,7 +186,7 @@ export function evaluateRules(rules: LinkRule[], ctx: EvaluationContext): Evalua
         const fallbackDelayMs = Math.min(Math.max(config.fallbackDelayMs || 2200, 800), 8000);
 
         if (/iphone|ipad|ipod/i.test(ctx.userAgent) && config.ios) {
-          result.destination = config.webFallback || result.destination;
+          result.destination = config.ios.scheme || config.webFallback || result.destination;
           result.isDeepLink = true;
           result.deepLink = {
             platform: "ios",
@@ -196,7 +196,7 @@ export function evaluateRules(rules: LinkRule[], ctx: EvaluationContext): Evalua
             fallbackDelayMs,
           };
         } else if (/android/i.test(ctx.userAgent) && config.android) {
-          result.destination = config.webFallback || result.destination;
+          result.destination = config.android.scheme || config.webFallback || result.destination;
           result.isDeepLink = true;
           result.deepLink = {
             platform: "android",
