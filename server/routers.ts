@@ -1085,6 +1085,8 @@ export const appRouter = router({
           backgroundColor: "#F7F7FC",
           textColor: "#14152B",
           buttonStyle: input.type === "bio" ? "pill" : "rounded",
+          renderMode: "builder",
+          customHtml: null,
           domainId,
           status: "draft",
         });
@@ -1104,6 +1106,8 @@ export const appRouter = router({
         backgroundColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
         textColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
         buttonStyle: z.enum(["rounded", "pill", "square"]).optional(),
+        renderMode: z.enum(["builder", "custom_html"]).optional(),
+        customHtml: z.string().max(60000).nullable().optional(),
         domainId: z.number().nullable().optional(),
         status: z.enum(["draft", "published"]).optional(),
       }))
@@ -1129,6 +1133,13 @@ export const appRouter = router({
               throw new Error("This custom domain is already assigned to another Page.");
             }
           }
+        }
+
+        const nextRenderMode = input.renderMode ?? page.renderMode;
+        const nextCustomHtml = input.customHtml === undefined ? page.customHtml : input.customHtml;
+        const nextStatus = input.status ?? page.status;
+        if (nextRenderMode === "custom_html" && nextStatus === "published" && !nextCustomHtml?.trim()) {
+          throw new Error("Add custom HTML before publishing this Page.");
         }
 
         const { id, ...raw } = input;
