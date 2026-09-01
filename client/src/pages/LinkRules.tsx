@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import FeatureGateCard from "@/components/FeatureGateCard";
+import RoutingAnalyticsCard from "@/components/RoutingAnalyticsCard";
 import { toast } from "sonner";
 import { useState } from "react";
 import { useParams } from "wouter";
@@ -30,6 +31,7 @@ export default function LinkRules() {
   const params = useParams<{ linkId: string }>();
   const linkId = parseInt(params.linkId || "0");
   const utils = trpc.useUtils();
+  const [routingDays, setRoutingDays] = useState(30);
 
   const { data: billingStatus, isLoading: billingLoading } = trpc.billing.status.useQuery(undefined, { enabled: !!user });
   const features = billingStatus?.planConfig?.features;
@@ -45,6 +47,10 @@ export default function LinkRules() {
     { enabled: !!linkId && canUseRedirectRules }
   );
   const { data: pixels } = trpc.pixels.list.useQuery(undefined, { enabled: canUseRedirectRules });
+  const { data: routingAnalytics } = trpc.link.analytics.useQuery(
+    { id: linkId, days: routingDays },
+    { enabled: !!linkId && canUseRedirectRules }
+  );
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<RuleType>("geo");
@@ -79,6 +85,7 @@ export default function LinkRules() {
       toast.success("Rule created");
       setAddDialogOpen(false);
       utils.linkRules.list.invalidate({ linkId });
+      utils.link.analytics.invalidate({ id: linkId, days: routingDays });
     },
     onError: (err) => {
       if (err.message?.includes("higher plan") || err.message?.includes("require")) {
@@ -93,6 +100,7 @@ export default function LinkRules() {
     onSuccess: () => {
       toast.success("Rule deleted");
       utils.linkRules.list.invalidate({ linkId });
+      utils.link.analytics.invalidate({ id: linkId, days: routingDays });
     },
     onError: (err) => toast.error(err.message),
   });
@@ -100,6 +108,7 @@ export default function LinkRules() {
   const toggleMutation = trpc.linkRules.update.useMutation({
     onSuccess: () => {
       utils.linkRules.list.invalidate({ linkId });
+      utils.link.analytics.invalidate({ id: linkId, days: routingDays });
     },
     onError: (err) => toast.error(err.message),
   });
@@ -161,6 +170,13 @@ export default function LinkRules() {
           />
         ) : (
           <>
+            <RoutingAnalyticsCard
+              rules={(routingAnalytics?.routingRules || rules || []) as any}
+              stats={routingAnalytics?.routingStats as any}
+              days={routingDays}
+              onDaysChange={setRoutingDays}
+            />
+
             {/* Existing rules */}
             {isLoading ? (
               <div className="text-center py-8 text-muted-foreground">Loading rules...</div>
