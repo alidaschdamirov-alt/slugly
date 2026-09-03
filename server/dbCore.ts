@@ -53,6 +53,14 @@ import type {
 import { ENV, isProtectedAdminEmail } from "./_core/env";
 import { getDatabaseUrl } from "./_core/databaseUrl";
 import { getLinkStatus } from "../shared/link-status";
+import { fillDailyClickSeries } from "./analyticsSeries";
+import { countActiveProjectLinks } from "./projectAnalytics";
+import { canonicalClickFilter } from "./clickMetrics";
+import {
+  SYSTEM_PROJECT_DESCRIPTION,
+  SYSTEM_PROJECT_NAME,
+  withCurrentSystemProjectCopy,
+} from "./systemProject";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -158,14 +166,15 @@ export async function createProject(data: InsertProject) {
 export async function getProjectsByUserId(userId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(projects).where(eq(projects.userId, userId)).orderBy(desc(projects.createdAt));
+  const rows = await db.select().from(projects).where(eq(projects.userId, userId)).orderBy(desc(projects.createdAt));
+  return rows.map(withCurrentSystemProjectCopy);
 }
 
 export async function getProjectById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+  return result.length > 0 ? withCurrentSystemProjectCopy(result[0]) : undefined;
 }
 
 export async function updateProject(id: number, data: Partial<Pick<InsertProject, "name" | "description" | "color">>) {
@@ -200,7 +209,7 @@ export async function ensureSystemProject(workspaceId: number, userId: number): 
   if (!db) throw new Error("Database not available");
   const existing = await db.select({ id: projects.id }).from(projects).where(and(eq(projects.workspaceId, workspaceId), eq(projects.isSystem, true))).limit(1);
   if (existing.length > 0) return existing[0].id;
-  const result = await db.insert(projects).values({ userId, workspaceId, name: "Other Links", description: "Links not assigned to any project", color: "#6B7280", isSystem: true });
+  const result = await db.insert(projects).values({ userId, workspaceId, name: SYSTEM_PROJECT_NAME, description: SYSTEM_PROJECT_DESCRIPTION, color: "#6B7280", isSystem: true });
   return result[0].insertId;
 }
 
@@ -339,7 +348,8 @@ export async function getTagClickStats(userId: number, tag: string, days: number
   const tagLinks = await db.select({ id: links.id }).from(links).where(and(eq(links.userId, userId), sql`JSON_CONTAINS(${links.tags}, JSON_QUOTE(${tag}))`));
   const linkIds = tagLinks.map(l => l.id);
   if (linkIds.length === 0) return { totalClicks: 0, clicksOverTime: [], topLinks: [], countries: [], devices: [], referrers: [] };
-  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const since = now - days * 24 * 60 * 60 * 1000;
   const [totalResult, timeResult, topLinksResult, countriesResult, devicesResult, referrersResult] = await Promise.all([
     db.select({ count: sql<number>`COUNT(*)` }).from(clicks).where(inArray(clicks.linkId, linkIds)),
     db.select({ day: sql<string>`DATE(FROM_UNIXTIME(timestamp / 1000))`, count: sql<number>`COUNT(*)` }).from(clicks).where(and(inArray(clicks.linkId, linkIds), gte(clicks.timestamp, since))).groupBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`).orderBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`),
@@ -348,7 +358,7 @@ export async function getTagClickStats(userId: number, tag: string, days: number
     db.select({ value: clicks.deviceType, count: sql<number>`COUNT(*)` }).from(clicks).where(and(inArray(clicks.linkId, linkIds), sql`${clicks.deviceType} IS NOT NULL`)).groupBy(clicks.deviceType).orderBy(desc(sql`COUNT(*)`)).limit(10),
     db.select({ value: clicks.referrer, count: sql<number>`COUNT(*)` }).from(clicks).where(and(inArray(clicks.linkId, linkIds), sql`${clicks.referrer} IS NOT NULL AND ${clicks.referrer} != ''`)).groupBy(clicks.referrer).orderBy(desc(sql`COUNT(*)`)).limit(10),
   ]);
-  return { totalClicks: totalResult[0]?.count ?? 0, clicksOverTime: timeResult, topLinks: topLinksResult, countries: countriesResult, devices: devicesResult, referrers: referrersResult };
+  return { totalClicks: totalResult[0]?.count ?? 0, clicksOverTime: fillDailyClickSeries(timeResult, since, now), topLinks: topLinksResult, countries: countriesResult, devices: devicesResult, referrers: referrersResult };
 }
 
 // ============ CLICK HELPERS ============
@@ -384,8 +394,10 @@ export async function getClickCountsByLinkIds(linkIds: number[]) {
 export async function getClicksOverTime(linkId: number, days: number = 30) {
   const db = await getDb();
   if (!db) return [];
-  const since = Date.now() - days * 24 * 60 * 60 * 1000;
-  return db.select({ day: sql<string>`DATE(FROM_UNIXTIME(timestamp / 1000))`, count: sql<number>`COUNT(*)` }).from(clicks).where(and(eq(clicks.linkId, linkId), gte(clicks.timestamp, since))).groupBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`).orderBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`);
+  const now = Date.now();
+  const since = now - days * 24 * 60 * 60 * 1000;
+  const rows = await db.select({ day: sql<string>`DATE(FROM_UNIXTIME(timestamp / 1000))`, count: sql<number>`COUNT(*)` }).from(clicks).where(and(eq(clicks.linkId, linkId), gte(clicks.timestamp, since))).groupBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`).orderBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`);
+  return fillDailyClickSeries(rows, since, now);
 }
 
 export async function getClicksOverTimeForLinks(linkIds: number[], days: number = 7) {
@@ -404,8 +416,10 @@ export async function getClicksOverTimeForLinks(linkIds: number[], days: number 
 export async function getProjectSparkline(linkIds: number[], days: number = 7): Promise<Array<{ day: string; count: number }>> {
   const db = await getDb();
   if (!db || linkIds.length === 0) return [];
-  const since = Date.now() - days * 24 * 60 * 60 * 1000;
-  return db.select({ day: sql<string>`DATE(FROM_UNIXTIME(timestamp / 1000))`, count: sql<number>`COUNT(*)` }).from(clicks).where(and(inArray(clicks.linkId, linkIds), gte(clicks.timestamp, since))).groupBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`).orderBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`);
+  const now = Date.now();
+  const since = now - days * 24 * 60 * 60 * 1000;
+  const rows = await db.select({ day: sql<string>`DATE(FROM_UNIXTIME(timestamp / 1000))`, count: sql<number>`COUNT(*)` }).from(clicks).where(and(inArray(clicks.linkId, linkIds), gte(clicks.timestamp, since))).groupBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`).orderBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`);
+  return fillDailyClickSeries(rows, since, now);
 }
 
 export async function getClickStats(linkId: number) {
@@ -550,19 +564,21 @@ export async function getRoutingClickStats(linkId: number, days: number = 30) {
 
 export async function getProjectClickStats(projectId: number, days: number = 30) {
   const db = await getDb();
-  if (!db) return { totalClicks: 0, uniqueClicks: 0, clicksOverTime: [], topLinks: [] };
-  const projectLinks = await db.select({ id: links.id }).from(links).where(eq(links.projectId, projectId));
+  if (!db) return { totalClicks: 0, uniqueClicks: 0, activeLinkCount: 0, clicksOverTime: [], topLinks: [] };
+  const projectLinks = await db.select().from(links).where(eq(links.projectId, projectId));
   const linkIds = projectLinks.map(l => l.id);
-  if (linkIds.length === 0) return { totalClicks: 0, uniqueClicks: 0, clicksOverTime: [], topLinks: [] };
-  const since = Date.now() - days * 24 * 60 * 60 * 1000;
-  const notBot = eq(clicks.isBot, false);
+  const activeLinkCount = countActiveProjectLinks(projectLinks);
+  if (linkIds.length === 0) return { totalClicks: 0, uniqueClicks: 0, activeLinkCount, clicksOverTime: [], topLinks: [] };
+  const now = Date.now();
+  const since = now - days * 24 * 60 * 60 * 1000;
+  const clickFilter = canonicalClickFilter(linkIds, since);
   const [totalResult, uniqueResult, timeResult, topLinksResult] = await Promise.all([
-    db.select({ count: sql<number>`COUNT(*)` }).from(clicks).where(and(inArray(clicks.linkId, linkIds), gte(clicks.timestamp, since), notBot)),
-    db.select({ count: sql<number>`COUNT(DISTINCT ${clicks.ipHash})` }).from(clicks).where(and(inArray(clicks.linkId, linkIds), gte(clicks.timestamp, since), notBot)),
-    db.select({ day: sql<string>`DATE(FROM_UNIXTIME(timestamp / 1000))`, count: sql<number>`COUNT(*)` }).from(clicks).where(and(inArray(clicks.linkId, linkIds), gte(clicks.timestamp, since), notBot)).groupBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`).orderBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`),
-    db.select({ linkId: clicks.linkId, count: sql<number>`COUNT(*)` }).from(clicks).where(and(inArray(clicks.linkId, linkIds), gte(clicks.timestamp, since), notBot)).groupBy(clicks.linkId).orderBy(desc(sql`COUNT(*)`)).limit(10),
+    db.select({ count: sql<number>`COUNT(*)` }).from(clicks).where(clickFilter),
+    db.select({ count: sql<number>`COUNT(DISTINCT ${clicks.ipHash})` }).from(clicks).where(clickFilter),
+    db.select({ day: sql<string>`DATE(FROM_UNIXTIME(timestamp / 1000))`, count: sql<number>`COUNT(*)` }).from(clicks).where(clickFilter).groupBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`).orderBy(sql`DATE(FROM_UNIXTIME(timestamp / 1000))`),
+    db.select({ linkId: clicks.linkId, count: sql<number>`COUNT(*)` }).from(clicks).where(clickFilter).groupBy(clicks.linkId).orderBy(desc(sql`COUNT(*)`)).limit(10),
   ]);
-  return { totalClicks: totalResult[0]?.count ?? 0, uniqueClicks: uniqueResult[0]?.count ?? 0, clicksOverTime: timeResult, topLinks: topLinksResult };
+  return { totalClicks: totalResult[0]?.count ?? 0, uniqueClicks: uniqueResult[0]?.count ?? 0, activeLinkCount, clicksOverTime: fillDailyClickSeries(timeResult, since, now), topLinks: topLinksResult };
 }
 
 // ============ DOMAIN HELPERS ============
@@ -913,11 +929,10 @@ export async function getClicksOverTimeFiltered(linkId: number, days: number = 3
 export async function getClicksForExport(linkId: number, days?: number) {
   const db = await getDb();
   if (!db) return [];
-  const conditions: any[] = [eq(clicks.linkId, linkId), eq(clicks.isBot, false)];
-  if (days) conditions.push(gte(clicks.timestamp, Date.now() - days * 24 * 60 * 60 * 1000));
+  const clickFilter = canonicalClickFilter([linkId], days ? Date.now() - days * 24 * 60 * 60 * 1000 : undefined);
   const link = await db.select({ shortCode: links.shortCode, destinationUrl: links.destinationUrl, utmSource: links.utmSource, utmMedium: links.utmMedium, utmCampaign: links.utmCampaign, utmTerm: links.utmTerm, utmContent: links.utmContent }).from(links).where(eq(links.id, linkId)).limit(1);
   const linkData = link[0];
-  const rows = await db.select({ timestamp: clicks.timestamp, country: clicks.country, city: clicks.city, deviceType: clicks.deviceType, browser: clicks.browser, os: clicks.os, referrer: clicks.referrer }).from(clicks).where(and(...conditions)).orderBy(desc(clicks.timestamp)).limit(10000);
+  const rows = await db.select({ timestamp: clicks.timestamp, country: clicks.country, city: clicks.city, deviceType: clicks.deviceType, browser: clicks.browser, os: clicks.os, referrer: clicks.referrer }).from(clicks).where(clickFilter).orderBy(desc(clicks.timestamp)).limit(10000);
   return rows.map(r => ({ Date: new Date(Number(r.timestamp)).toISOString().replace("T", " ").slice(0, 16), "Short URL": linkData?.shortCode || "", Destination: linkData?.destinationUrl || "", Country: r.country || "", City: r.city || "", Device: r.deviceType || "", Browser: r.browser || "", OS: r.os || "", Referrer: r.referrer || "", "UTM Source": linkData?.utmSource || "", "UTM Medium": linkData?.utmMedium || "", "UTM Campaign": linkData?.utmCampaign || "", "UTM Term": linkData?.utmTerm || "", "UTM Content": linkData?.utmContent || "" }));
 }
 
@@ -930,9 +945,8 @@ export async function getProjectClicksForExport(projectId: number, days?: number
   if (projectLinks.length === 0) return [];
   const linkIds = projectLinks.map(l => l.id);
   const linkMap = Object.fromEntries(projectLinks.map(l => [l.id, l]));
-  const conditions: any[] = [inArray(clicks.linkId, linkIds), eq(clicks.isBot, false)];
-  if (days) conditions.push(gte(clicks.timestamp, Date.now() - days * 24 * 60 * 60 * 1000));
-  const clickRows = await db.select({ linkId: clicks.linkId, timestamp: clicks.timestamp, country: clicks.country, deviceType: clicks.deviceType, browser: clicks.browser, os: clicks.os, referrer: clicks.referrer }).from(clicks).where(and(...conditions)).orderBy(desc(clicks.timestamp)).limit(50000);
+  const clickFilter = canonicalClickFilter(linkIds, days ? Date.now() - days * 24 * 60 * 60 * 1000 : undefined);
+  const clickRows = await db.select({ linkId: clicks.linkId, timestamp: clicks.timestamp, country: clicks.country, deviceType: clicks.deviceType, browser: clicks.browser, os: clicks.os, referrer: clicks.referrer }).from(clicks).where(clickFilter).orderBy(desc(clicks.timestamp)).limit(50000);
   return clickRows.map(c => ({ Date: new Date(Number(c.timestamp)).toISOString().replace("T", " ").slice(0, 16), "Short URL": linkMap[c.linkId]?.shortCode || "", Destination: linkMap[c.linkId]?.destinationUrl || "", Project: projectName, Country: c.country || "", Device: c.deviceType || "", Browser: c.browser || "", OS: c.os || "", Referrer: c.referrer || "", "UTM Source": linkMap[c.linkId]?.utmSource || "", "UTM Medium": linkMap[c.linkId]?.utmMedium || "", "UTM Campaign": linkMap[c.linkId]?.utmCampaign || "", "UTM Term": linkMap[c.linkId]?.utmTerm || "", "UTM Content": linkMap[c.linkId]?.utmContent || "" }));
 }
 
@@ -1014,9 +1028,8 @@ export async function getTagClicksForExport(userId: number, tag: string, days?: 
   if (taggedLinks.length === 0) return [];
   const linkIds = taggedLinks.map(l => l.id);
   const linkMap = Object.fromEntries(taggedLinks.map(l => [l.id, l]));
-  const conditions: any[] = [inArray(clicks.linkId, linkIds), eq(clicks.isBot, false)];
-  if (days) conditions.push(gte(clicks.timestamp, Date.now() - days * 24 * 60 * 60 * 1000));
-  const clickRows = await db.select({ linkId: clicks.linkId, timestamp: clicks.timestamp, country: clicks.country, deviceType: clicks.deviceType, browser: clicks.browser, os: clicks.os, referrer: clicks.referrer }).from(clicks).where(and(...conditions)).orderBy(desc(clicks.timestamp)).limit(50000);
+  const clickFilter = canonicalClickFilter(linkIds, days ? Date.now() - days * 24 * 60 * 60 * 1000 : undefined);
+  const clickRows = await db.select({ linkId: clicks.linkId, timestamp: clicks.timestamp, country: clicks.country, deviceType: clicks.deviceType, browser: clicks.browser, os: clicks.os, referrer: clicks.referrer }).from(clicks).where(clickFilter).orderBy(desc(clicks.timestamp)).limit(50000);
   return clickRows.map(c => ({ Date: new Date(Number(c.timestamp)).toISOString().replace("T", " ").slice(0, 16), "Short URL": linkMap[c.linkId]?.shortCode || "", Destination: linkMap[c.linkId]?.destinationUrl || "", Tag: tag, Country: c.country || "", Device: c.deviceType || "", Browser: c.browser || "", OS: c.os || "", Referrer: c.referrer || "" }));
 }
 

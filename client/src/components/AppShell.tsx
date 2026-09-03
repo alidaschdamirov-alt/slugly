@@ -33,6 +33,7 @@ import NotificationBell from "./NotificationBell";
 import { useState } from "react";
 import { useLocation } from "wouter";
 import WorkspaceSwitcher from "./WorkspaceSwitcher";
+import { APP_NAV_CLASSES } from "@/lib/navigationLayout";
 
 const navItems = [
   { icon: LayoutDashboard, label: "Projects", path: "/dashboard" },
@@ -66,7 +67,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex min-w-0 items-center gap-2">
             <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
               <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" className="lg:hidden h-8 w-8">
+                <Button variant="ghost" size="icon" className={APP_NAV_CLASSES.menuButton}>
                   <Menu className="h-5 w-5" />
                 </Button>
               </SheetTrigger>
@@ -107,8 +108,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <img src="/assets/slugly-logo.svg" alt="Slugly" className="h-7 w-7" />
               <span className="hidden text-xl font-extrabold tracking-[-0.5px] sm:inline" style={{ fontFamily: "'Bricolage Grotesque'" }}>Slugly</span>
             </div>
-            <div className="ml-1 hidden border-l border-border pl-3.5 lg:block"><WorkspaceSwitcher /></div>
-            <nav className="ml-1 hidden min-w-0 items-center gap-0.5 overflow-x-auto lg:flex">
+            <div className={APP_NAV_CLASSES.workspaceSwitcher}><WorkspaceSwitcher /></div>
+            <nav className={APP_NAV_CLASSES.desktopNav}>
               {navItems.map(item => {
                 const isActive = location === item.path ||
                   (item.path === "/dashboard" && location.startsWith("/project")) ||

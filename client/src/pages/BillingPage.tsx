@@ -8,6 +8,7 @@ import { getLoginUrl } from "@/const";
 import { Check, Loader2, Sparkles, AlertTriangle, CreditCard, ExternalLink, Crown, Users, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { trackEvent } from "@/lib/analytics";
+import { customDomainPlanFeature } from "@/lib/billingCopy";
 
 interface PlanTier {
   key: "free" | "starter" | "pro" | "team";
@@ -43,7 +44,7 @@ const PLAN_TIERS: PlanTier[] = [
       "3 projects",
       "Unlimited links",
       "1-year analytics",
-      "Custom domains — coming soon",
+      customDomainPlanFeature(1),
       "UTM templates",
       "Basic campaign dashboard",
       "1 seat",
@@ -59,7 +60,7 @@ const PLAN_TIERS: PlanTier[] = [
       "Unlimited projects",
       "Unlimited links",
       "1-year analytics",
-      "Custom domains — coming soon",
+      customDomainPlanFeature(3),
       "Full campaign dashboard",
       "CSV export",
       "Bulk operations",
@@ -77,7 +78,7 @@ const PLAN_TIERS: PlanTier[] = [
     icon: <Users className="h-4 w-4 text-purple-500" />,
     features: [
       "Everything in Pro",
-      "Custom domains — coming soon",
+      customDomainPlanFeature(25),
       "2-year analytics",
       "White-label reports",
       "Extended roles (viewer/editor)",
@@ -108,6 +109,7 @@ export default function BillingPage() {
   if (!user) { window.location.href = getLoginUrl(); return null; }
 
   const currentPlan = (billing?.plan || "free") as PlanTier["key"];
+  const planChangesEnabled = billing?.planChangesEnabled === true;
   const usage = billing?.usage;
   const planConfig = billing?.planConfig;
 
@@ -122,6 +124,10 @@ export default function BillingPage() {
 
   const handleChangePlan = (plan: PlanTier["key"]) => {
     if (plan === currentPlan) return;
+    if (!planChangesEnabled) {
+      toast.info("Online plan changes are unavailable until secure checkout is connected.");
+      return;
+    }
     const targetIndex = planOrder.indexOf(plan);
     const action = targetIndex > currentIndex ? "upgrade" : "downgrade";
     trackEvent(`${action}_clicked`, { from: currentPlan, to: plan });
@@ -136,13 +142,13 @@ export default function BillingPage() {
           <p className="text-muted-foreground mt-1">Manage your workspace plan</p>
         </div>
 
-        <Card className="p-4 mb-6 border-yellow-200 dark:border-yellow-800 bg-yellow-50/50 dark:bg-yellow-900/10">
+        <Card className="p-4 mb-6 border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-900/10">
           <div className="flex gap-3">
-            <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 shrink-0 mt-0.5" />
+            <Check className="h-5 w-5 text-green-600 dark:text-green-400 shrink-0 mt-0.5" />
             <div className="text-sm">
-              <p className="font-medium text-yellow-800 dark:text-yellow-300">Custom domain routing is coming soon</p>
-              <p className="text-yellow-700 dark:text-yellow-400 mt-1">
-                Domains can be verified now, but paid plans do not rely on custom-domain traffic routing until the routing infrastructure is live.
+              <p className="font-medium text-green-800 dark:text-green-300">Custom domain routing is live</p>
+              <p className="text-green-700 dark:text-green-400 mt-1">
+                Paid plans can connect branded subdomains with managed HTTPS. Allowances are listed per plan below.
               </p>
             </div>
           </div>
@@ -217,14 +223,14 @@ export default function BillingPage() {
                 {isCurrent ? (
                   <Button variant="outline" className="w-full" disabled>Current Plan</Button>
                 ) : isUpgrade ? (
-                  <Button className="w-full" onClick={() => handleChangePlan(tier.key)} disabled={changePlan.isPending}>
+                  <Button className="w-full" onClick={() => handleChangePlan(tier.key)} disabled={!planChangesEnabled || changePlan.isPending} title={!planChangesEnabled ? "Secure checkout is not available yet" : undefined}>
                     {changePlan.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-                    Upgrade
+                    {planChangesEnabled ? "Upgrade" : "Checkout unavailable"}
                   </Button>
                 ) : (
-                  <Button variant="outline" className="w-full" onClick={() => handleChangePlan(tier.key)} disabled={changePlan.isPending}>
+                  <Button variant="outline" className="w-full" onClick={() => handleChangePlan(tier.key)} disabled={!planChangesEnabled || changePlan.isPending} title={!planChangesEnabled ? "Secure checkout is not available yet" : undefined}>
                     {changePlan.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-                    Switch
+                    {planChangesEnabled ? "Switch" : "Checkout unavailable"}
                   </Button>
                 )}
               </Card>
@@ -246,8 +252,8 @@ export default function BillingPage() {
         )}
 
         <p className="text-xs text-muted-foreground mt-6 text-center">
-          Plan changes take effect immediately. On downgrade, excess resources become read-only (links still redirect).
-          Stripe billing integration coming soon for automated payments.
+          Online plan changes are temporarily unavailable until secure checkout is connected.
+          Your current plan and resources remain unchanged.
         </p>
       </div>
     </AppShell>

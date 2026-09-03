@@ -20,6 +20,7 @@ describe("custom domain helpers", () => {
     expect(validateCustomHostname("example.com")).toMatch(/subdomain/i);
     expect(validateCustomHostname("127.0.0.1")).toMatch(/IP addresses/i);
     expect(validateCustomHostname("bad_name.example.com")).toMatch(/letters, numbers, and hyphens/i);
+    expect(validateCustomHostname("-bad_.dom ain!!")).toMatch(/letters, numbers, and hyphens/i);
     expect(validateCustomHostname("go.slugly.io")).toMatch(/Slugly-owned/i);
   });
 

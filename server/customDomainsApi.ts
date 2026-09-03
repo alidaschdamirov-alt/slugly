@@ -41,7 +41,6 @@ export function validateCustomHostname(value: string): string | null {
   if (!hostname) return "Enter a subdomain, for example go.yourbrand.com.";
   if (hostname.length > 253) return "Domain is too long.";
   if (net.isIP(hostname)) return "IP addresses cannot be used as custom domains.";
-  if (labels.length < 3) return "Use a subdomain such as go.yourbrand.com, not the root domain.";
   if (labels.some(label => label.length < 1 || label.length > 63)) {
     return "Every domain part must be between 1 and 63 characters.";
   }
@@ -49,6 +48,7 @@ export function validateCustomHostname(value: string): string | null {
     return "Use only letters, numbers, and hyphens in the domain.";
   }
   if (/^\d+$/.test(labels[labels.length - 1])) return "Top-level domain cannot be only numbers.";
+  if (labels.length < 3) return "Use a subdomain such as go.yourbrand.com, not the root domain.";
   if (DEFAULT_APP_HOSTS.has(hostname) || hostname.endsWith(".slugly.io")) {
     return "Slugly-owned domains cannot be added as customer domains.";
   }

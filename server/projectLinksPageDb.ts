@@ -43,6 +43,43 @@ function buildConditions(input: ProjectLinksSqlPageInput, deletedIds: number[]) 
   return conditions;
 }
 
+export function buildProjectLinksItemsQuery(
+  database: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  input: ProjectLinksSqlPageInput,
+  conditions: ReturnType<typeof buildConditions>,
+  page: number,
+) {
+  // Keep the outer link id qualified by joining an aggregated subquery. A raw
+  // correlated subquery is unsafe here: Drizzle removes both table qualifiers
+  // inside it and MySQL then compares clicks.linkId with clicks.id, returning
+  // the same global count for every link.
+  const clickCounts = database
+    .select({
+      linkId: clicks.linkId,
+      clickCount: count(clicks.id).as("click_count"),
+    })
+    .from(clicks)
+    .groupBy(clicks.linkId)
+    .as("click_counts");
+  const clickCount = sql<number>`COALESCE(${clickCounts.clickCount}, 0)`;
+  const sortExpression = input.sortField === "clicks"
+    ? clickCount
+    : input.sortField === "shortCode"
+      ? links.shortCode
+      : links.createdAt;
+  const order = input.sortDir === "asc" ? asc(sortExpression) : desc(sortExpression);
+  const tieBreaker = input.sortDir === "asc" ? asc(links.id) : desc(links.id);
+
+  return database
+    .select({ ...getTableColumns(links), clickCount })
+    .from(links)
+    .leftJoin(clickCounts, eq(clickCounts.linkId, links.id))
+    .where(and(...conditions))
+    .orderBy(order, tieBreaker)
+    .limit(input.limit)
+    .offset((page - 1) * input.limit);
+}
+
 export async function queryProjectLinksSqlPage(input: ProjectLinksSqlPageInput) {
   const database = await getDb();
   if (!database) return { items: [], total: 0, page: 1, pageCount: 1, allTags: [] as string[] };
@@ -60,21 +97,7 @@ export async function queryProjectLinksSqlPage(input: ProjectLinksSqlPageInput) 
   const pageCount = Math.max(1, Math.ceil(total / input.limit));
   const page = Math.min(Math.max(1, input.page), pageCount);
 
-  const clickCount = sql<number>`(SELECT COUNT(*) FROM ${clicks} WHERE ${clicks.linkId} = ${links.id})`;
-  const sortExpression = input.sortField === "clicks"
-    ? clickCount
-    : input.sortField === "shortCode"
-      ? links.shortCode
-      : links.createdAt;
-  const order = input.sortDir === "asc" ? asc(sortExpression) : desc(sortExpression);
-  const tieBreaker = input.sortDir === "asc" ? asc(links.id) : desc(links.id);
-  const items = await database
-    .select({ ...getTableColumns(links), clickCount })
-    .from(links)
-    .where(and(...conditions))
-    .orderBy(order, tieBreaker)
-    .limit(input.limit)
-    .offset((page - 1) * input.limit);
+  const items = await buildProjectLinksItemsQuery(database, input, conditions, page);
 
   let allTags = input.meta?.allTags;
   if (!allTags) {
