@@ -6,9 +6,11 @@ import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
 import { ArrowLeft, Link2, Loader2, MousePointerClick, TrendingUp } from "lucide-react";
 import CsvExportButton from "@/components/CsvExportButton";
+import StableAnalyticsChart, { ANALYTICS_CHART_ANIMATION } from "@/components/StableAnalyticsChart";
+import { fetchProjectAnalyticsCsv } from "@/lib/csvExport";
 import { useState } from "react";
 import { useLocation, useParams } from "wouter";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 
 export default function ProjectAnalytics() {
   const { user, loading: authLoading } = useAuth();
@@ -16,6 +18,7 @@ export default function ProjectAnalytics() {
   const params = useParams<{ id: string }>();
   const projectId = parseInt(params.id || "0");
   const [days, setDays] = useState(30);
+  const utils = trpc.useUtils();
 
   const { data: project } = trpc.project.get.useQuery({ id: projectId }, { enabled: !!user && projectId > 0 });
   const { data: analytics, isLoading } = trpc.project.analytics.useQuery(
@@ -49,10 +52,7 @@ export default function ProjectAnalytics() {
             <CsvExportButton
               data={undefined}
               filename={`project-${projectId}-analytics`}
-              onFetch={async () => {
-                const result = await trpc.useUtils().analyticsExport.projectCsv.fetch({ projectId, days });
-                return result as any[];
-              }}
+              onFetch={() => fetchProjectAnalyticsCsv(utils, projectId, days)}
             />
           </div>
         </div>
@@ -93,7 +93,7 @@ export default function ProjectAnalytics() {
                     <Link2 className="h-5 w-5 text-primary" />
                   </div>
                   <div>
-                    <p className="text-2xl font-bold">{analytics.topLinks.length}</p>
+                    <p className="text-2xl font-bold">{analytics.activeLinkCount}</p>
                     <p className="text-sm text-muted-foreground">Active Links</p>
                   </div>
                 </div>
@@ -104,15 +104,15 @@ export default function ProjectAnalytics() {
             <Card className="p-6">
               <h3 className="font-medium mb-4">Clicks Over Time</h3>
               {analytics.clicksOverTime.length > 0 ? (
-                <ResponsiveContainer width="100%" height={250}>
+                <StableAnalyticsChart>
                   <AreaChart data={analytics.clicksOverTime}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                     <XAxis dataKey="day" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} />
                     <Tooltip />
-                    <Area type="monotone" dataKey="count" stroke="oklch(0.55 0.22 270)" fill="oklch(0.55 0.22 270 / 0.2)" strokeWidth={2} />
+                    <Area type="monotone" dataKey="count" stroke="oklch(0.55 0.22 270)" fill="oklch(0.55 0.22 270 / 0.2)" strokeWidth={2} isAnimationActive={ANALYTICS_CHART_ANIMATION} />
                   </AreaChart>
-                </ResponsiveContainer>
+                </StableAnalyticsChart>
               ) : (
                 <p className="text-center text-muted-foreground py-8">No click data for this period</p>
               )}

@@ -14,6 +14,7 @@ import * as db from "./db";
 import { isReservedSlug } from "./redirect";
 import * as ws from "./workspace";
 import { buildGs1DigitalLinkUrl, normalizeGs1Qualifier, validateGtin } from "../shared/gs1";
+import { BILLING_UNAVAILABLE_MESSAGE, isDirectPlanChangeEnabled } from "./billingPlanChanges";
 
 function normalizeHttpUrl(value: unknown, label: string) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} is required.`);
@@ -2134,10 +2135,10 @@ export const appRouter = router({
           members: memberCount,
         },
         paymentFailed: false, // Placeholder until Stripe webhooks are connected
+        planChangesEnabled: isDirectPlanChangeEnabled(),
       };
     }),
 
-    // TEMP: simulated payment until Stripe — instant plan switch
     changePlan: wsAdminProcedure
       .input(
         z.object({
@@ -2145,6 +2146,9 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ ctx, input }) => {
+        if (!isDirectPlanChangeEnabled()) {
+          throw new Error(BILLING_UNAVAILABLE_MESSAGE);
+        }
         // Only owner/admin can change plan (wsAdminProcedure enforces this)
         await ws.setWorkspacePlan(ctx.workspace.id, input.plan);
         await db.writeAuditLog({

@@ -3,19 +3,19 @@
  * Impersonated support sessions are always excluded from product analytics.
  */
 
+import { normalizeAnalyticsId, normalizeAnalyticsTraits } from "./analyticsIdentity";
+
 type AmplitudeModule = typeof import("@amplitude/analytics-browser");
 
 const AMPLITUDE_KEY = import.meta.env.VITE_AMPLITUDE_API_KEY || "";
 const GA_ID = import.meta.env.VITE_GA_ID || "";
 const CONSENT_KEY = "slugly_analytics_consent";
-const MIN_ANALYTICS_ID_LENGTH = 5;
 const IMPERSONATION_FLAG = "slugly_impersonation_active=1";
 
 let initialized = false;
 let consentGranted = false;
 let lastTrackedPage = "";
 let clickTrackingInstalled = false;
-let warnedInvalidAnalyticsId = false;
 let amplitudeClient: AmplitudeModule | null = null;
 let amplitudeLoading: Promise<AmplitudeModule | null> | null = null;
 
@@ -141,35 +141,6 @@ function getPagePath(path?: string) {
   if (path) return path;
   if (typeof window === "undefined") return "/";
   return `${window.location.pathname}${window.location.search}`;
-}
-
-function warnInvalidAnalyticsId(value: unknown) {
-  if (warnedInvalidAnalyticsId) return;
-  warnedInvalidAnalyticsId = true;
-  console.warn("[Analytics] Skipping identity with invalid id length", value);
-}
-
-function normalizeAnalyticsId(prefix: "user" | "ws", value: unknown) {
-  const raw = String(value ?? "").trim();
-  if (!raw) return null;
-  const normalized = raw.startsWith(`${prefix}_`) ? raw : `${prefix}_${raw}`;
-  if (normalized.length < MIN_ANALYTICS_ID_LENGTH) {
-    warnInvalidAnalyticsId(raw);
-    return null;
-  }
-  return normalized;
-}
-
-function normalizeAnalyticsTraits(traits?: Record<string, any>) {
-  if (!traits) return undefined;
-  return Object.fromEntries(
-    Object.entries(traits).map(([key, value]) => {
-      if ((key === "workspaceId" || key === "workspace_id") && value != null) {
-        return [key, normalizeAnalyticsId("ws", value) ?? undefined];
-      }
-      return [key, value];
-    }).filter(([, value]) => value !== undefined)
-  );
 }
 
 export function trackPageView(path?: string, title?: string) {

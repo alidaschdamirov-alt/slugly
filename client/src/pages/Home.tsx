@@ -8,6 +8,7 @@ import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { trackEvent } from "@/lib/analytics";
 import { DESTINATION_URL_ERROR, normalizeDestinationUrl } from "@shared/validation/destination-url";
+import { planAnonymousShorten, resumeAnonymousShorten } from "@/lib/anonymousShorten";
 
 const TILES = [
   { ch: "Instagram", c: "#E1306C", slug: "summer-sale", n: 2481, sp: "0,22 12,18 24,24 36,12 48,16 60,8 72,14 88,4", live: true },
@@ -29,15 +30,18 @@ export default function Home() {
   const liveCounterRef = useRef<HTMLSpanElement>(null);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const turnstileRef = useRef<TurnstileInstance | null>(null);
+  const pendingUrlRef = useRef<string | null>(null);
   const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || "";
 
   const shortenMutation = trpc.link.shortenAnonymous.useMutation({
     onSuccess: (data) => {
+      pendingUrlRef.current = null;
       setShortCode(data.shortCode);
       setIsShortening(false);
       trackEvent("anonymous_shorten", { shortCode: data.shortCode });
     },
     onError: (err) => {
+      pendingUrlRef.current = null;
       if (err.message.includes("Enter a valid URL")) {
         setError(DESTINATION_URL_ERROR);
       } else {
@@ -71,13 +75,15 @@ export default function Home() {
     setError("");
     setUrl(normalized);
     setShortCode(null);
-    setIsShortening(true);
-    if (turnstileSiteKey && !captchaToken) {
-      toast.error("Please complete the CAPTCHA verification.");
-      setIsShortening(false);
+    const action = planAnonymousShorten(normalized, Boolean(turnstileSiteKey), captchaToken);
+    if (action.kind === "await-captcha") {
+      pendingUrlRef.current = action.pendingUrl;
+      setIsShortening(true);
       return;
     }
-    shortenMutation.mutate({ url: normalized, captchaToken: captchaToken || undefined });
+    pendingUrlRef.current = null;
+    setIsShortening(true);
+    shortenMutation.mutate(action.payload);
   };
 
   const handleCopy = async () => {
@@ -149,6 +155,7 @@ export default function Home() {
               inputMode="url"
               placeholder="Paste a long URL…"
               value={url}
+              disabled={isShortening}
               onChange={(e) => { setUrl(e.target.value); setError(""); }}
               onBlur={() => { const normalized = normalizeDestinationUrl(url); if (normalized) setUrl(normalized); }}
               onKeyDown={(e) => { if (e.key === "Enter") handleShorten(); }}
@@ -162,7 +169,7 @@ export default function Home() {
               className="flex-none inline-flex items-center justify-center gap-2 font-bold rounded-[11px] px-[18px] py-[11px] text-[15px] text-white border-0 cursor-pointer disabled:opacity-70"
               style={{ background: "#5A3FF0", boxShadow: "0 8px 20px -8px rgba(90,63,240,.6)" }}
             >
-              {isShortening ? "..." : "Shorten →"}
+              {isShortening ? "Verifying…" : "Shorten →"}
             </button>
           </div>
           {turnstileSiteKey && !shortCode && (
@@ -170,7 +177,14 @@ export default function Home() {
               <Turnstile
                 ref={turnstileRef}
                 siteKey={turnstileSiteKey}
-                onSuccess={(token) => setCaptchaToken(token)}
+                onSuccess={(token) => {
+                  setCaptchaToken(token);
+                  const payload = resumeAnonymousShorten(pendingUrlRef.current, token);
+                  if (!payload) return;
+                  pendingUrlRef.current = null;
+                  setUrl(payload.url);
+                  shortenMutation.mutate(payload);
+                }}
                 onExpire={() => setCaptchaToken(null)}
                 options={{ theme: "light", size: "normal" }}
               />
