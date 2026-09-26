@@ -52,6 +52,7 @@ vi.mock("./workspace", () => ({
   countWorkspaceLinks: vi.fn().mockResolvedValue(0),
   countWorkspaceDomains: vi.fn().mockResolvedValue(0),
   countWorkspaceMembers: vi.fn().mockResolvedValue(1),
+  setWorkspacePlan: vi.fn().mockResolvedValue(undefined),
   checkLimit: vi.fn().mockReturnValue({ allowed: true, limit: -1, current: 0 }),
   adminListWorkspaces: vi.fn().mockResolvedValue([]),
 }));
@@ -375,5 +376,15 @@ describe("billing router", () => {
     expect(result.plan).toBe("pro");
     expect(result.usage).toBeDefined();
     expect(result.planConfig).toBeDefined();
+    expect(result.planChangesEnabled).toBe(false);
+  });
+
+  it("rejects plan changes when secure checkout is unavailable", async () => {
+    const caller = appRouter.createCaller(createMockContext({ plan: "free" }));
+
+    await expect(caller.billing.changePlan({ plan: "team" })).rejects.toThrow(
+      "secure checkout",
+    );
+    expect(mockedWs.setWorkspacePlan).not.toHaveBeenCalled();
   });
 });

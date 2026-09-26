@@ -56,6 +56,13 @@ describe("Pages custom HTML rendering", () => {
     expect(html).toContain('<head><base target="_top">');
   });
 
+  it("reports content height after layout and image changes", () => {
+    const html = prepareSandboxedCustomHtml("<html><head></head><body><img src='hero.jpg'></body></html>", model());
+    expect(html).toContain('type: MESSAGE_TYPE, height: height');
+    expect(html).toContain('new ResizeObserver(measure)');
+    expect(html).toContain('image.addEventListener("load", measure');
+  });
+
   it("renders custom HTML in a sandbox without same-origin or form privileges", () => {
     const html = renderPublicPageHtml(model());
     expect(html).toContain("sandbox=");
@@ -64,6 +71,10 @@ describe("Pages custom HTML rendering", () => {
     expect(html).not.toContain("allow-same-origin");
     expect(html).not.toContain("allow-forms");
     expect(html).toContain("srcdoc=");
+    expect(html).toContain('event.source !== frame.contentWindow');
+    expect(html).toContain('event.data.type !== "slugly:custom-page-size"');
+    expect(html).toContain('class="custom-shell"');
+    expect(html).not.toContain('.custom-frame{position:fixed');
     expect(html).toContain("Powered by Slugly");
   });
 });

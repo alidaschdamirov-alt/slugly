@@ -7,6 +7,8 @@ import { workspaces, workspaceMembers, workspaceInvitations, projects, links, do
 import type { Workspace, WorkspaceMember, InsertWorkspace, InsertWorkspaceMember } from "../drizzle/schema";
 import { getSiteSetting, setSiteSetting } from "./db";
 import { normalizeDestinationUrl } from "../shared/validation/destination-url";
+import { fillDailyClickSeries } from "./analyticsSeries";
+import { canonicalClickFilter } from "./clickMetrics";
 
 // ============ PLAN CONFIG (source of truth for gating) ============
 
@@ -432,8 +434,8 @@ function isReportActiveLink(link: LinkRow, now = Date.now()) {
   return true;
 }
 
-function periodStart(days: number) {
-  return Date.now() - days * 24 * 60 * 60 * 1000;
+function periodStart(days: number, now = Date.now()) {
+  return now - days * 24 * 60 * 60 * 1000;
 }
 
 function fmtDay(timestamp: number) {
@@ -472,25 +474,26 @@ async function getClickSummary(linkIds: number[], days: number) {
   if (!db || linkIds.length === 0) {
     return { totalClicks: 0, uniqueClicks: 0, clicksOverTime: [], topCountries: [], topDevices: [] };
   }
-  const since = periodStart(days);
-  const notBot = eq(clicks.isBot, false);
+  const now = Date.now();
+  const since = periodStart(days, now);
+  const clickFilter = canonicalClickFilter(linkIds, since);
   const [total, unique, time, countries, devices] = await Promise.all([
-    db.select({ count: sql<number>`COUNT(*)` }).from(clicks).where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, notBot)),
-    db.select({ count: sql<number>`COUNT(DISTINCT ${clicks.ipHash})` }).from(clicks).where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, notBot)),
+    db.select({ count: sql<number>`COUNT(*)` }).from(clicks).where(clickFilter),
+    db.select({ count: sql<number>`COUNT(DISTINCT ${clicks.ipHash})` }).from(clicks).where(clickFilter),
     db.select({ day: sql<string>`DATE(FROM_UNIXTIME(${clicks.timestamp} / 1000))`, count: sql<number>`COUNT(*)` })
       .from(clicks)
-      .where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, notBot))
+      .where(clickFilter)
       .groupBy(sql`DATE(FROM_UNIXTIME(${clicks.timestamp} / 1000))`)
       .orderBy(sql`DATE(FROM_UNIXTIME(${clicks.timestamp} / 1000))`),
     db.select({ value: clicks.country, count: sql<number>`COUNT(*)` })
       .from(clicks)
-      .where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, notBot, sql`${clicks.country} IS NOT NULL`))
+      .where(and(clickFilter, sql`${clicks.country} IS NOT NULL`))
       .groupBy(clicks.country)
       .orderBy(desc(sql`COUNT(*)`))
       .limit(10),
     db.select({ value: clicks.deviceType, count: sql<number>`COUNT(*)` })
       .from(clicks)
-      .where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, notBot, sql`${clicks.deviceType} IS NOT NULL`))
+      .where(and(clickFilter, sql`${clicks.deviceType} IS NOT NULL`))
       .groupBy(clicks.deviceType)
       .orderBy(desc(sql`COUNT(*)`))
       .limit(10),
@@ -498,7 +501,7 @@ async function getClickSummary(linkIds: number[], days: number) {
   return {
     totalClicks: total[0]?.count ?? 0,
     uniqueClicks: unique[0]?.count ?? 0,
-    clicksOverTime: time,
+    clicksOverTime: fillDailyClickSeries(time, since, now),
     topCountries: countries,
     topDevices: devices,
   };
@@ -513,7 +516,7 @@ export async function getCampaignChannelStats(workspaceId: number, input: { days
   const since = periodStart(days);
   const clickCounts = await db.select({ linkId: clicks.linkId, count: sql<number>`COUNT(*)` })
     .from(clicks)
-    .where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, eq(clicks.isBot, false)))
+    .where(canonicalClickFilter(linkIds, since))
     .groupBy(clicks.linkId);
   const clickCountByLinkId = new Map(clickCounts.map(row => [row.linkId, row.count]));
   const channelMap = new Map<string, { utmSource: string | null; utmMedium: string | null; clicks: number; uniqueLinks: number }>();
@@ -591,7 +594,7 @@ export async function generateReportData(workspaceId: number, input: { projectId
   const clickCounts = db && linkIds.length > 0
     ? await db.select({ linkId: clicks.linkId, count: sql<number>`COUNT(*)`, unique: sql<number>`COUNT(DISTINCT ${clicks.ipHash})` })
         .from(clicks)
-        .where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, eq(clicks.isBot, false)))
+        .where(canonicalClickFilter(linkIds, since))
         .groupBy(clicks.linkId)
     : [];
   const countByLink = new Map(clickCounts.map(row => [row.linkId, row]));
@@ -613,7 +616,7 @@ export async function generateReportData(workspaceId: number, input: { projectId
   const topReferrers = db && linkIds.length > 0
     ? await db.select({ referrer: clicks.referrer, clicks: sql<number>`COUNT(*)` })
         .from(clicks)
-        .where(and(inArray(clicks.linkId, linkIds), sql`${clicks.timestamp} >= ${since}`, eq(clicks.isBot, false), sql`${clicks.referrer} IS NOT NULL AND ${clicks.referrer} != ''`))
+        .where(and(canonicalClickFilter(linkIds, since), sql`${clicks.referrer} IS NOT NULL AND ${clicks.referrer} != ''`))
         .groupBy(clicks.referrer)
         .orderBy(desc(sql`COUNT(*)`))
         .limit(10)

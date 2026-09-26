@@ -93,10 +93,51 @@ export function prepareSandboxedCustomHtml(
 ) {
   const expanded = expandCustomHtml(html, model);
   const base = '<base target="_top">';
-  if (/<head\b[^>]*>/i.test(expanded)) {
-    return expanded.replace(/<head\b([^>]*)>/i, match => `${match}${base}`);
+  const resizeBridge = `<script>
+(function () {
+  var MESSAGE_TYPE = "slugly:custom-page-size";
+  var lastHeight = 0;
+  function measure() {
+    var root = document.documentElement;
+    var body = document.body;
+    var height = Math.max(
+      root ? root.scrollHeight : 0,
+      root ? root.offsetHeight : 0,
+      body ? body.scrollHeight : 0,
+      body ? body.offsetHeight : 0
+    );
+    if (!height || height === lastHeight) return;
+    lastHeight = height;
+    parent.postMessage({ type: MESSAGE_TYPE, height: height }, "*");
   }
-  return `${base}${expanded}`;
+  function start() {
+    measure();
+    requestAnimationFrame(measure);
+    setTimeout(measure, 100);
+    setTimeout(measure, 500);
+    setTimeout(measure, 1500);
+    if (typeof ResizeObserver === "function") {
+      var observer = new ResizeObserver(measure);
+      observer.observe(document.documentElement);
+      if (document.body) observer.observe(document.body);
+    }
+    Array.prototype.forEach.call(document.images || [], function (image) {
+      if (!image.complete) image.addEventListener("load", measure, { once: true });
+    });
+    window.addEventListener("load", measure);
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    start();
+  }
+})();
+</script>`;
+  const injectedHead = `${base}${resizeBridge}`;
+  if (/<head\b[^>]*>/i.test(expanded)) {
+    return expanded.replace(/<head\b([^>]*)>/i, match => `${match}${injectedHead}`);
+  }
+  return `${injectedHead}${expanded}`;
 }
 
 function renderCustomHtmlPage(model: Awaited<ReturnType<typeof getPublicPageModel>>) {
@@ -112,20 +153,37 @@ function renderCustomHtmlPage(model: Awaited<ReturnType<typeof getPublicPageMode
   <meta name="robots" content="index,follow">
   <title>${escapeHtml(title)} · Slugly</title>
   <style>
-    *{box-sizing:border-box}html,body{width:100%;height:100%;margin:0;background:#fff}
-    .custom-frame{position:fixed;inset:0;width:100%;height:100%;border:0;background:#fff}
+    *{box-sizing:border-box}html,body{width:100%;min-height:100%;margin:0;background:#fff}
+    .custom-shell{width:100%;min-height:100vh;overflow-x:auto;background:#fff}
+    .custom-frame{display:block;width:100%;height:100vh;min-height:100vh;border:0;background:#fff}
     .powered{position:fixed;right:12px;bottom:12px;z-index:10;padding:6px 9px;border-radius:999px;background:rgba(20,21,43,.82);color:#fff;font:600 10px/1 system-ui,sans-serif;text-decoration:none;backdrop-filter:blur(8px)}
   </style>
 </head>
 <body>
-  <iframe
-    class="custom-frame"
-    title="${escapeHtml(page.title)}"
-    sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation allow-downloads allow-modals"
-    referrerpolicy="no-referrer"
-    srcdoc="${escapeHtml(customDocument)}"
-  ></iframe>
+  <main class="custom-shell">
+    <iframe
+      class="custom-frame"
+      title="${escapeHtml(page.title)}"
+      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation allow-downloads allow-modals"
+      referrerpolicy="no-referrer"
+      scrolling="no"
+      srcdoc="${escapeHtml(customDocument)}"
+    ></iframe>
+  </main>
   <a class="powered" href="https://slugly.io/" target="_blank" rel="noopener noreferrer">Powered by Slugly</a>
+  <script>
+    (function () {
+      var frame = document.querySelector(".custom-frame");
+      if (!frame) return;
+      window.addEventListener("message", function (event) {
+        if (event.source !== frame.contentWindow) return;
+        if (!event.data || event.data.type !== "slugly:custom-page-size") return;
+        var height = Number(event.data.height);
+        if (!Number.isFinite(height) || height < 1) return;
+        frame.style.height = Math.max(window.innerHeight, Math.min(Math.ceil(height), 100000)) + "px";
+      });
+    })();
+  </script>
 </body>
 </html>`;
 }

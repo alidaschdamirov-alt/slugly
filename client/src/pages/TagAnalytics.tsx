@@ -7,6 +7,7 @@ import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
 import { ArrowLeft, MousePointerClick, Globe, Monitor, Link2, Loader2, Tag } from "lucide-react";
 import CsvExportButton from "@/components/CsvExportButton";
+import { fetchTagAnalyticsCsv } from "@/lib/csvExport";
 import { useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -17,6 +18,7 @@ export default function TagAnalytics() {
   const params = useParams<{ tag: string }>();
   const tag = decodeURIComponent(params.tag || "");
   const [days, setDays] = useState(30);
+  const utils = trpc.useUtils();
 
   const { data, isLoading } = trpc.tag.analytics.useQuery(
     { tag, days },
@@ -70,10 +72,7 @@ export default function TagAnalytics() {
             <CsvExportButton
               data={undefined}
               filename={`tag-${tag}-analytics`}
-              onFetch={async () => {
-                const result = await trpc.useUtils().analyticsExport.tagCsv.fetch({ tag, days });
-                return result as any[];
-              }}
+              onFetch={() => fetchTagAnalyticsCsv(utils, tag, days)}
             />
           </div>
 

@@ -39,7 +39,6 @@ function validateHostname(value: string): string | null {
 
   if (!hostname) return "Enter a subdomain, for example go.yourbrand.com.";
   if (hostname.length > 253) return "Domain is too long.";
-  if (labels.length < 3) return "Use a subdomain such as go.yourbrand.com, not the root domain.";
   if (labels.some(label => label.length < 1 || label.length > 63)) {
     return "Every domain part must be between 1 and 63 characters.";
   }
@@ -49,6 +48,7 @@ function validateHostname(value: string): string | null {
   if (/^\d+$/.test(labels[labels.length - 1])) {
     return "Top-level domain cannot be only numbers.";
   }
+  if (labels.length < 3) return "Use a subdomain such as go.yourbrand.com, not the root domain.";
 
   return null;
 }
